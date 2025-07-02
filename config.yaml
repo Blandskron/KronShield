@@ -1,0 +1,9 @@
+timeouts:
+  request: 10
+ports_to_scan: [80, 443, 8080, 8443]
+xss_payloads:
+  - "<script>alert(1)</script>"
+  - "'\"><img src=x onerror=alert(1)>"
+sqli_payloads:
+  - "' OR '1'='1"
+  - "\" OR \"1\"=\"1"

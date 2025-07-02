@@ -1,0 +1,48 @@
+{
+  "url": "https://www.nxtara.com/",
+  "findings": [
+    {
+      "type": "info",
+      "status_code": 200,
+      "headers": {
+        "Date": "Wed, 02 Jul 2025 03:52:20 GMT",
+        "Content-Type": "text/html; charset=utf-8",
+        "Transfer-Encoding": "chunked",
+        "Connection": "keep-alive",
+        "Server": "cloudflare",
+        "Nel": "{\"report_to\":\"cf-nel\",\"success_fraction\":0.0,\"max_age\":604800}",
+        "X-Nextjs-Cache": "HIT",
+        "X-Nextjs-Prerender": "1",
+        "X-Nextjs-Stale-Time": "4294967294",
+        "X-Powered-By": "Next.js",
+        "Cache-Control": "s-maxage=31536000",
+        "Vary": "Accept-Encoding",
+        "Report-To": "{\"group\":\"cf-nel\",\"max_age\":604800,\"endpoints\":[{\"url\":\"https://a.nel.cloudflare.com/report/v4?s=GMhqrDbohF6Sk%2B0GyFazXWSWhSaJp7TMtZBW621JSCZ3M%2FUun24YvXExwaN584iwkxjU3pYgcmN0tLo%2B3zDkErbBcndNenOUhAnojSDA\"}]}",
+        "Cf-Cache-Status": "DYNAMIC",
+        "Content-Encoding": "br",
+        "CF-RAY": "958b3092ee8fa671-MIA",
+        "alt-svc": "h3=\":443\"; ma=86400"
+      }
+    },
+    {
+      "type": "port",
+      "port": 80,
+      "status": "open"
+    },
+    {
+      "type": "port",
+      "port": 443,
+      "status": "open"
+    },
+    {
+      "type": "port",
+      "port": 8080,
+      "status": "open"
+    },
+    {
+      "type": "port",
+      "port": 8443,
+      "status": "open"
+    }
+  ]
+}
