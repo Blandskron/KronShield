@@ -5,7 +5,6 @@ import textwrap
 from gpt import summarize
 from typing import Any
 
-
 class StyledPDF(FPDF):
     def header(self):
         self.set_font("Helvetica", "B", 14)
@@ -50,9 +49,8 @@ def generate_pdf_report(content: str) -> str:
 
     return str(output_path)
 
-def generate_pdf_report_from_json(url: str, findings: list[Any]) -> str:
+def generate_pdf_report_from_json(url: str, findings: list[Any], api_key: str) -> str:
+    summarize.init(api_key)
     data = {"url": url, "findings": findings}
-
     content = summarize.generate_summary(data)
-
     return generate_pdf_report(content)
