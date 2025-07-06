@@ -18,7 +18,7 @@
           "cross-origin-opener-policy": "same-origin",
           "content-length": "2705",
           "content-encoding": "br",
-          "date": "Sun, 06 Jul 2025 05:16:27 GMT"
+          "date": "Sun, 06 Jul 2025 05:59:43 GMT"
         }
       }
     },
@@ -41,6 +41,20 @@
         "port": 443,
         "status": "open"
       }
+    },
+    {
+      "type": "xss",
+      "detail": "XSS detectado con payload",
+      "url": "https://blandskron.com?q=",
+      "payload": "",
+      "extra": null
+    },
+    {
+      "type": "xss",
+      "detail": "XSS detectado con payload",
+      "url": "https://blandskron.com?q=",
+      "payload": "",
+      "extra": null
     }
   ]
 }

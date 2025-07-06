@@ -1,15 +1,16 @@
 import typer
 import json
 from pathlib import Path
-from gpt import summarize
+from gpt import summarize, client
 from reports.generator import generate_pdf_report
+import os
 
 app = typer.Typer(help="Genera reportes visuales desde auditorías guardadas")
 
 @app.command("generate")
 def generate(
     input: str = typer.Option(..., "--input", "-i", help="Archivo JSON con resultados de auditoría"),
-    token: str = typer.Option(..., "--token", "-t", help="Token GPT válido"),
+    token: str = os.getenv("OPENAI_API_KEY"),
     format: str = typer.Option("pdf", "--format", "-f", help="Formato de salida (solo 'pdf')")
 ):
     path = Path(input)
@@ -20,6 +21,7 @@ def generate(
     with open(path, "r") as f:
         data = json.load(f)
 
+    client.init(token)
     typer.echo("Consultando a GPT para redactar el informe...")
     content = summarize.generate_summary(data)
 

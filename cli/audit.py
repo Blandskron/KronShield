@@ -7,6 +7,7 @@ from infra.repository import save_findings
 import typer
 import json
 from urllib.parse import urlparse
+import os
 
 app = typer.Typer()
 
@@ -19,7 +20,7 @@ def validate_url(url: str):
 @app.command()
 def run(
     url: str = typer.Option(..., "--url", "-u", help="URL a auditar"),
-    token: str = typer.Option(..., "--token", "-t", help="API key de OpenAI"),
+    token: str = os.getenv("OPENAI_API_KEY"),
     output: str = typer.Option("output.json", "--output", "-o", help="Archivo de salida JSON"),
 ):
     validate_url(url)
@@ -27,7 +28,7 @@ def run(
     typer.echo(f"Auditando {url}...")
 
     try:
-        client.init(token)  # ✅ Inicializa el cliente GPT
+        client.init(token)
         findings = audit_website(url, token)
     except Exception as e:
         typer.echo(f"Error durante auditoría: {e}")
