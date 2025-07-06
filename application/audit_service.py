@@ -7,21 +7,21 @@ from reports.generator import generate_pdf_report_from_json
 from infra.db import SessionLocal
 from infra.repository import save_findings
 
-
-def audit_website(url: str, api_key: str) -> str:
+def audit_website(url: str, api_key: str) -> list[Finding]:
     findings: list[Finding] = []
 
-    # Módulos que devuelven objetos Finding
+    # Ejecutar todos los módulos
     findings.extend(info_check(url))
     findings.extend(scan_ports(url))
     findings.extend(test_xss(url))
     findings.extend(test_sqli(url))
 
-    # Guardar en base de datos
+    # Guardar hallazgos en la base de datos
     with SessionLocal() as db:
         save_findings(db, findings, url)
 
-    # Serializar para PDF
+    # También generar el PDF (puede usarse el path en otra parte)
     serializable = [f.__dict__ for f in findings]
-    pdf_path = generate_pdf_report_from_json(url, serializable, api_key)
-    return pdf_path
+    generate_pdf_report_from_json(url, serializable, api_key)
+
+    return findings

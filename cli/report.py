@@ -20,7 +20,6 @@ def generate(
     with open(path, "r") as f:
         data = json.load(f)
 
-    summarize.init(token)
     typer.echo("Consultando a GPT para redactar el informe...")
     content = summarize.generate_summary(data)
 

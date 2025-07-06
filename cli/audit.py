@@ -25,8 +25,9 @@ def run(
     validate_url(url)
 
     typer.echo(f"Auditando {url}...")
+
     try:
-        client.init(token)
+        client.init(token)  # ✅ Inicializa el cliente GPT
         findings = audit_website(url, token)
     except Exception as e:
         typer.echo(f"Error durante auditoría: {e}")
@@ -42,15 +43,14 @@ def run(
         typer.echo(f"Error al guardar JSON: {e}")
 
     try:
-        report_path = report_gen.generate_pdf_report_from_json(url, serializable)
+        report_path = report_gen.generate_pdf_report_from_json(url, serializable, token)
         typer.echo(f"Reporte PDF generado: {report_path}")
     except Exception as e:
         typer.echo(f"Error al generar PDF: {e}")
 
     try:
         with SessionLocal() as db:
-            save_findings(db, findings)
+            save_findings(db, findings, url)
         typer.echo("Hallazgos guardados en base de datos.")
     except Exception as e:
         typer.echo(f"Error al guardar en la base de datos: {e}")
-    
