@@ -14,19 +14,19 @@ def generate(
 ):
     path = Path(input)
     if not path.exists():
-        typer.echo(f"❌ El archivo '{input}' no existe.")
+        typer.echo(f"El archivo '{input}' no existe.")
         raise typer.Exit(1)
 
     with open(path, "r") as f:
         data = json.load(f)
 
     summarize.init(token)
-    typer.echo("🤖 Consultando a GPT para redactar el informe...")
+    typer.echo("Consultando a GPT para redactar el informe...")
     content = summarize.generate_summary(data)
 
     if format == "pdf":
         output = generate_pdf_report(content)
-        typer.echo(f"✅ Reporte PDF generado en: {output}")
+        typer.echo(f"Reporte PDF generado en: {output}")
     else:
-        typer.echo("❌ Formato no soportado. Solo 'pdf' disponible.")
+        typer.echo("Formato no soportado. Solo 'pdf' disponible.")
         raise typer.Exit(1)

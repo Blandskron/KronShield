@@ -1,7 +1,16 @@
-# pentest_agent
-Proyecto Profesional
+# Pentest Agent
 
-python main.py audit run --url https://www.blandskron.com/ --token sk-proj-cK2yeW
+Auditoría profesional automatizada con GPT-4.
 
-python main.py report generate --input reports/report_www.blandskron.com__20250702_035223.json --token sk-proj-cK2yeW --format pdf
+## Uso
 
+```bash
+# 1. Instalar
+pip install -r requirements.txt
+
+# 2. Ejecutar auditoría
+python main.py audit run -u https://ejemplo.com -t $OPENAI_API_KEY
+
+# 3. Generar reporte PDF
+python main.py report generate -i output.json -t $OPENAI_API_KEY
+```

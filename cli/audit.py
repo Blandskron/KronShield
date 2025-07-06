@@ -1,23 +1,23 @@
-import typer
+from application.audit_service import audit_website
 from gpt import client
-from core import recon, scanner, xss, sqli, report
+from reports import generator as report_gen
+from domain.models import Finding
+import typer, json
 
-app = typer.Typer(help="Auditoría automatizada de sitios web con soporte GPT")
+app = typer.Typer()
 
-@app.command("run")
-def audit_command(
-    url: str = typer.Option(..., "--url", "-u", help="URL a auditar"),
-    token: str = typer.Option(..., "--token", "-t", help="Token GPT requerido")
+@app.command()
+def run(
+    url: str = typer.Option(..., "--url", "-u"),
+    token: str = typer.Option(..., "--token", "-t"),
 ):
-    """Ejecuta una auditoría completa a la URL con payloads generados por GPT."""
     client.init(token)
-    typer.echo(f"🔐 Token verificado. Iniciando auditoría de: {url}")
+    typer.echo(f"Auditando {url}...")
 
-    info = recon.run(url)
-    ports = scanner.scan_ports(url)
-    xss_results = xss.test(url)
-    sqli_results = sqli.test(url)
+    findings = audit_website(url)
+    serializable = [f.__dict__ for f in findings]
 
-    findings = info + ports + xss_results + sqli_results
-    report.generate(url, findings)
-    typer.echo("✅ Auditoría finalizada. Reporte generado.")
+    with open("output.json", "w") as f:
+        json.dump({"url": url, "findings": serializable}, f, indent=2)
+
+    typer.echo("Archivo 'output.json' generado.")

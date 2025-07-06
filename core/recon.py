@@ -1,12 +1,20 @@
+from domain.models import Finding, FindingType
 import requests
 
 def run(url: str):
     try:
         response = requests.get(url, timeout=10)
-        return [{
-            "type": "info",
-            "status_code": response.status_code,
-            "headers": dict(response.headers),
-        }]
+        return [
+            Finding(
+                type=FindingType.INFO,
+                detail=f"Status code: {response.status_code}",
+                extra={"headers": dict(response.headers)}
+            )
+        ]
     except Exception as e:
-        return [{"type": "error", "message": str(e)}]
+        return [
+            Finding(
+                type=FindingType.ERROR,
+                detail=str(e)
+            )
+        ]
