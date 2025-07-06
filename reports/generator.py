@@ -2,6 +2,9 @@ from fpdf import FPDF
 from datetime import datetime
 from pathlib import Path
 import textwrap
+from gpt import summarize
+from typing import Any
+
 
 class StyledPDF(FPDF):
     def header(self):
@@ -46,3 +49,10 @@ def generate_pdf_report(content: str) -> str:
     pdf.output(str(output_path))
 
     return str(output_path)
+
+def generate_pdf_report_from_json(url: str, findings: list[Any]) -> str:
+    data = {"url": url, "findings": findings}
+
+    content = summarize.generate_summary(data)
+
+    return generate_pdf_report(content)

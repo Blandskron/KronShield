@@ -1,13 +1,22 @@
 import socket
+from domain.models import Finding, FindingType
 
 def scan_ports(url: str):
     host = url.replace("http://", "").replace("https://", "").split("/")[0]
-    open_ports = []
+    findings = []
+
     for port in [80, 443, 8080, 8443]:
         try:
             sock = socket.create_connection((host, port), timeout=2)
-            open_ports.append({"type": "port", "port": port, "status": "open"})
+            findings.append(
+                Finding(
+                    type=FindingType.PORT,
+                    detail=f"Puerto {port} abierto",
+                    extra={"port": port, "status": "open"}
+                )
+            )
             sock.close()
         except:
             continue
-    return open_ports
+
+    return findings

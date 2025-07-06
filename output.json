@@ -1,0 +1,46 @@
+{
+  "url": "https://blandskron.com",
+  "findings": [
+    {
+      "type": "info",
+      "detail": "Status code: 200",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "headers": {
+          "Connection": "Keep-Alive",
+          "Keep-Alive": "timeout=5, max=100",
+          "content-type": "text/html; charset=utf-8",
+          "x-frame-options": "DENY",
+          "vary": "Cookie,Accept-Encoding",
+          "x-content-type-options": "nosniff",
+          "referrer-policy": "same-origin",
+          "cross-origin-opener-policy": "same-origin",
+          "content-length": "2705",
+          "content-encoding": "br",
+          "date": "Sun, 06 Jul 2025 05:16:27 GMT"
+        }
+      }
+    },
+    {
+      "type": "port",
+      "detail": "Puerto 80 abierto",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "port": 80,
+        "status": "open"
+      }
+    },
+    {
+      "type": "port",
+      "detail": "Puerto 443 abierto",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "port": 443,
+        "status": "open"
+      }
+    }
+  ]
+}
