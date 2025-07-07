@@ -12,6 +12,10 @@ import os
 app = typer.Typer()
 
 def validate_url(url: str):
+    """
+    Validates that the provided URL contains a scheme and a network location.
+    Exits the application if invalid.
+    """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         typer.echo("URL inválida. Debe incluir http:// o https://")
@@ -23,6 +27,20 @@ def run(
     token: str = os.getenv("OPENAI_API_KEY"),
     output: str = typer.Option("output.json", "--output", "-o", help="Archivo de salida JSON"),
 ):
+    """
+    Main CLI entrypoint to execute a full audit workflow against a target URL.
+
+    - Validates the target URL
+    - Initializes GPT client for summarization
+    - Executes audit and stores results in a JSON file
+    - Generates a PDF report from audit findings
+    - Persists findings in the database
+
+    Args:
+        url (str): Target website URL.
+        token (str): OpenAI API token for report generation.
+        output (str): Path to save the resulting JSON file.
+    """
     validate_url(url)
 
     typer.echo(f"Auditando {url}...")

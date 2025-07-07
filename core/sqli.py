@@ -3,6 +3,18 @@ from domain.models import Finding, FindingType
 from gpt import client, prompts
 
 def test(url: str):
+    """
+    Tests for potential SQL Injection vulnerabilities on a given URL.
+
+    Uses GPT-generated payloads to attempt injection via query parameters.
+    Flags responses that contain typical SQL error indicators.
+
+    Args:
+        url (str): The target URL to test.
+
+    Returns:
+        list[Finding]: A list of SQLI or error findings.
+    """
     prompt = prompts.sqli_prompt(url)
     payloads = client.generate_payloads(prompt)
     findings = []

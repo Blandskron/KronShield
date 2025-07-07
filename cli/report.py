@@ -13,6 +13,18 @@ def generate(
     token: str = os.getenv("OPENAI_API_KEY"),
     format: str = typer.Option("pdf", "--format", "-f", help="Formato de salida (solo 'pdf')")
 ):
+    """
+    Generates a visual report (PDF) from a previously saved audit result file in JSON format.
+
+    - Loads and validates the input JSON
+    - Summarizes the findings using GPT
+    - Generates a PDF report based on the summarized content
+
+    Args:
+        input (str): Path to the audit results JSON file.
+        token (str): OpenAI API key used to generate summaries.
+        format (str): Output format (currently only 'pdf' is supported).
+    """
     path = Path(input)
     if not path.exists():
         typer.echo(f"El archivo '{input}' no existe.")

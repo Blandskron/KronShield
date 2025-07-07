@@ -3,6 +3,17 @@ from domain.models import Finding, FindingType
 from gpt import client, prompts
 
 def test(url: str):
+    """
+    Tests for potential reflected XSS vulnerabilities on a given URL.
+
+    Sends GPT-generated payloads via a query parameter and checks if the payload is reflected in the response.
+
+    Args:
+        url (str): The target URL to test (must accept a 'q' parameter).
+
+    Returns:
+        list[Finding]: A list of XSS or error findings.
+    """
     prompt = prompts.xss_prompt(url)
     payloads = client.generate_payloads(prompt)
     findings = []

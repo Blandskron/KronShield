@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 import os
 from pathlib import Path
 
+# -----------------------------------------------------------------------------
+# Entry point for the CLI-based audit system.
+# Loads environment variables and mounts subcommands for 'audit' and 'report'.
+# -----------------------------------------------------------------------------
 
 env_path = Path("config") / ".env"
 load_dotenv(dotenv_path=env_path)

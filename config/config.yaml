@@ -1,9 +1,22 @@
+# -----------------------------------------------------------------------------
+# Configuration file for the Web Audit Engine
+# Defines core parameters for timeouts, ports, and injection payloads.
+#
+# - timeouts: request-level time limits (in seconds)
+# - ports_to_scan: HTTP/HTTPS ports used during the port scanning phase
+# - xss_payloads: payloads for detecting reflected/stored XSS vulnerabilities
+# - sqli_payloads: payloads for testing basic SQL Injection via inputs
+# -----------------------------------------------------------------------------
+
 timeouts:
   request: 10
+
 ports_to_scan: [80, 443, 8080, 8443]
+
 xss_payloads:
   - "<script>alert(1)</script>"
   - "'\"><img src=x onerror=alert(1)>"
+  
 sqli_payloads:
   - "' OR '1'='1"
   - "\" OR \"1\"=\"1"
