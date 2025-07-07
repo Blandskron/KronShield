@@ -37,32 +37,33 @@ Aplica sobre esta URL: {url}
 Formato: uno por línea, sin texto adicional.
 """
 
-def summary_prompt(data: dict):
-    """
-    Returns a prompt instructing GPT to write a technical audit summary.
-
-    Includes structured findings extracted from a prior audit execution.
-    Output is meant to be clear, concise, and professional.
-
-    Args:
-        data (dict): A dictionary containing 'url' and 'findings' keys.
-
-    Returns:
-        str: A formatted prompt for audit summary generation.
-    """
+def summary_prompt(data: dict) -> str:
     url = data.get("url", "URL no especificada")
     findings = data.get("findings", [])
 
     formatted_findings = ""
-    for f in findings:
-        formatted_findings += f"- Categoría: {f.get('category', 'N/A')}\n  Detalle: {f.get('description', 'Sin descripción')}\n\n"
+    for idx, f in enumerate(findings, 1):
+        formatted_findings += f"### Hallazgo {idx}: {f.get('category', 'N/A')}\n"
+        formatted_findings += f"{f.get('description', 'Sin descripción')}\n\n"
 
     return f"""
 Redacta un informe profesional de auditoría web para la URL: {url}
 
-Incluye los siguientes hallazgos en formato estructurado y comprensible para un equipo técnico:
+El formato debe usar encabezados '##' y '###' para separar secciones y subsecciones. Usa viñetas y saltos de línea claros.
+
+Estructura esperada:
+
+## Resumen Ejecutivo
+
+[Breve introducción profesional]
+
+## Hallazgos Detallados
 
 {formatted_findings}
 
-Evita explicaciones redundantes, mantén un lenguaje técnico claro y profesional.
+## Recomendaciones Finales
+
+[Incluir consejos profesionales y llamada a la acción]
+
+El informe será convertido en PDF, por lo tanto evita emojis y mantén un lenguaje técnico y claro.
 """

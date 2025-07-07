@@ -1,6 +1,5 @@
 from application.audit_service import audit_website
-from gpt import client, summarize
-from reports import generator as report_gen
+from gpt import client
 from domain.models import Finding
 from infra.db import SessionLocal
 from infra.repository import save_findings
@@ -8,6 +7,7 @@ import typer
 import json
 from urllib.parse import urlparse
 import os
+from pathlib import Path
 
 app = typer.Typer()
 
@@ -25,21 +25,15 @@ def validate_url(url: str):
 def run(
     url: str = typer.Option(..., "--url", "-u", help="URL a auditar"),
     token: str = os.getenv("OPENAI_API_KEY"),
-    output: str = typer.Option("output.json", "--output", "-o", help="Archivo de salida JSON"),
 ):
     """
-    Main CLI entrypoint to execute a full audit workflow against a target URL.
+    Ejecuta una auditoría web y guarda los resultados en un archivo JSON y en la base de datos.
 
-    - Validates the target URL
-    - Initializes GPT client for summarization
-    - Executes audit and stores results in a JSON file
-    - Generates a PDF report from audit findings
-    - Persists findings in the database
-
-    Args:
-        url (str): Target website URL.
-        token (str): OpenAI API token for report generation.
-        output (str): Path to save the resulting JSON file.
+    - Valida la URL de destino
+    - Inicializa el cliente GPT
+    - Ejecuta la auditoría contra la URL objetivo
+    - Guarda los hallazgos como JSON (en carpeta 'results')
+    - Inserta los hallazgos en la base de datos
     """
     validate_url(url)
 
@@ -54,10 +48,16 @@ def run(
 
     serializable = [f.__dict__ for f in findings]
 
+    # Extraer dominio y definir path de salida
+    domain = urlparse(url).netloc.replace("www.", "")
+    output_dir = Path("results") / domain
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{domain}.json"
+
     try:
-        with open(output, "w") as f:
+        with open(output_path, "w") as f:
             json.dump({"url": url, "findings": serializable}, f, indent=2)
-        typer.echo(f"Archivo JSON generado: {output}")
+        typer.echo(f"Archivo JSON generado: {output_path}")
     except Exception as e:
         typer.echo(f"Error al guardar JSON: {e}")
 

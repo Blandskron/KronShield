@@ -2,8 +2,9 @@ import typer
 import json
 from pathlib import Path
 from gpt import summarize, client
-from reports.generator import generate_pdf_report
+from reports.report_html import generate_html_report
 import os
+from urllib.parse import urlparse
 
 app = typer.Typer(help="Genera reportes visuales desde auditorías guardadas")
 
@@ -11,35 +12,19 @@ app = typer.Typer(help="Genera reportes visuales desde auditorías guardadas")
 def generate(
     input: str = typer.Option(..., "--input", "-i", help="Archivo JSON con resultados de auditoría"),
     token: str = os.getenv("OPENAI_API_KEY"),
-    format: str = typer.Option("pdf", "--format", "-f", help="Formato de salida (solo 'pdf')")
 ):
-    """
-    Generates a visual report (PDF) from a previously saved audit result file in JSON format.
-
-    - Loads and validates the input JSON
-    - Summarizes the findings using GPT
-    - Generates a PDF report based on the summarized content
-
-    Args:
-        input (str): Path to the audit results JSON file.
-        token (str): OpenAI API key used to generate summaries.
-        format (str): Output format (currently only 'pdf' is supported).
-    """
     path = Path(input)
     if not path.exists():
         typer.echo(f"El archivo '{input}' no existe.")
         raise typer.Exit(1)
 
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     client.init(token)
     typer.echo("Consultando a GPT para redactar el informe...")
     content = summarize.generate_summary(data)
 
-    if format == "pdf":
-        output = generate_pdf_report(content)
-        typer.echo(f"Reporte PDF generado en: {output}")
-    else:
-        typer.echo("Formato no soportado. Solo 'pdf' disponible.")
-        raise typer.Exit(1)
+    domain = urlparse(data["url"]).netloc.replace("www.", "")
+    output = generate_html_report(content, domain)
+    typer.echo(f"Reporte HTML generado en: {output}")
