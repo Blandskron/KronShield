@@ -74,15 +74,15 @@ def generate_pdf_report(content: str) -> str:
 
 def generate_pdf_report_from_json(url: str, findings: list[Any], api_key: str) -> str:
     """
-    Generates a PDF report by summarizing findings using GPT and rendering it.
+    Generates a professional PDF report using GPT to summarize findings.
 
     Args:
-        url (str): Audited target URL.
-        findings (list): List of findings from the audit.
-        api_key (str): OpenAI API token for summary generation.
+        url (str): Target URL audited.
+        findings (list): Findings obtained during the audit (from output.json).
+        api_key (str): OpenAI API key.
 
     Returns:
-        str: Path to the generated PDF report.
+        str: Path to the generated PDF.
     """
     data = {"url": url, "findings": findings}
     content = summarize.generate_summary(data)
