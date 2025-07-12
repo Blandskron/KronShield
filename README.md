@@ -40,12 +40,14 @@ pip install -r requirements.txt
 ```bash
 # 1. Ejecutar auditoría web
 python main.py audit run -u https://blandskron.com
+python main.py audit run -u https://demo.owasp-juice.shop/#/
 
 # Esto genera un archivo JSON en:
 # results/blandskron.com/blandskron.com.json
 
 # 2. Generar reporte HTML profesional
 python main.py report generate -i results/blandskron.com/blandskron.com.json
+python main.py report generate -i results/demo.owasp-juice.shop/demo.owasp-juice.shop.json
 ```
 
 ## Estructura del Proyecto
@@ -74,11 +76,6 @@ pentest-agent/
 
 Todos los hallazgos son interpretados y redactados usando el modelo `gpt-4`, contextualizando los resultados de la auditoría y generando recomendaciones con lenguaje natural profesional.
 
-## Notas
-
-* La salida en PDF fue reemplazada por HTML debido a problemas de codificación (ej. Unicode y símbolos).
-* Próximamente: soporte para múltiples idiomas y generación de dashboard web.
-* Los datos son almacenados localmente. No se realiza explotación ni vulneración real de los sistemas analizados.
 
 ## Licencia
 

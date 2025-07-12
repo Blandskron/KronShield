@@ -1,0 +1,87 @@
+{
+  "url": "https://demo.owasp-juice.shop/#/",
+  "findings": [
+    {
+      "type": "info",
+      "detail": "Status code: 200",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "headers": {
+          "Date": "Fri, 11 Jul 2025 23:55:54 GMT",
+          "Server": "Heroku",
+          "Accept-Ranges": "bytes",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=0",
+          "Content-Encoding": "br",
+          "Content-Type": "text/html; charset=UTF-8",
+          "Etag": "W/\"138f5-197fbcac37a\"",
+          "Feature-Policy": "payment 'self'",
+          "Last-Modified": "Fri, 11 Jul 2025 23:20:59 GMT",
+          "Nel": "{\"report_to\":\"heroku-nel\",\"response_headers\":[\"Via\"],\"max_age\":3600,\"success_fraction\":0.01,\"failure_fraction\":0.1}",
+          "Report-To": "{\"group\":\"heroku-nel\",\"endpoints\":[{\"url\":\"https://nel.heroku.com/reports?s=TpswcwGxTjUA2b2wVwlvxpKuiKkB6UVLJKHD%2BRVW2Cw%3D\\u0026sid=812dcc77-0bd0-43b1-a5f1-b25750382959\\u0026ts=1752278154\"}],\"max_age\":3600}",
+          "Reporting-Endpoints": "heroku-nel=\"https://nel.heroku.com/reports?s=TpswcwGxTjUA2b2wVwlvxpKuiKkB6UVLJKHD%2BRVW2Cw%3D&sid=812dcc77-0bd0-43b1-a5f1-b25750382959&ts=1752278154\"",
+          "Vary": "Accept-Encoding",
+          "Via": "1.1 heroku-router",
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Recruiting": "/#/jobs",
+          "Keep-Alive": "timeout=3, max=100",
+          "Connection": "Keep-Alive",
+          "Transfer-Encoding": "chunked"
+        }
+      }
+    },
+    {
+      "type": "port",
+      "detail": "Puerto 80 abierto",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "port": 80,
+        "status": "open"
+      }
+    },
+    {
+      "type": "port",
+      "detail": "Puerto 443 abierto",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "port": 443,
+        "status": "open"
+      }
+    },
+    {
+      "type": "port",
+      "detail": "Puerto 8080 abierto",
+      "url": null,
+      "payload": null,
+      "extra": {
+        "port": 8080,
+        "status": "open"
+      }
+    },
+    {
+      "type": "xss",
+      "detail": "XSS detectado con payload",
+      "url": "https://demo.owasp-juice.shop/#/?q=",
+      "payload": "",
+      "extra": null
+    },
+    {
+      "type": "xss",
+      "detail": "XSS detectado con payload",
+      "url": "https://demo.owasp-juice.shop/#/?q=",
+      "payload": "",
+      "extra": null
+    },
+    {
+      "type": "xss",
+      "detail": "XSS detectado con payload",
+      "url": "https://demo.owasp-juice.shop/#/?q=",
+      "payload": "",
+      "extra": null
+    }
+  ]
+}
