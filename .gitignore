@@ -213,3 +213,17 @@ pentest.db
 *.db-wal
 *.sqlite
 *.sqlite3
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Pentest evidence / generated results
+results/
+reports/
+evidence/
+screenshots/
+*.log
