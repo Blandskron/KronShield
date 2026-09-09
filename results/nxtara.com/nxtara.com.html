@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Informe de Auditoría - nxtara.com</title>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 2em; background: #fefefe; color: #333; }
+        h1 { text-align: center; color: #004080; }
+        h2 { color: #0055a5; border-bottom: 1px solid #ccc; margin-top: 1.5em; padding-bottom: .2em; }
+        h3 { color: #003366; margin-top: 1em; }
+        p { line-height: 1.6; }
+        ul { line-height: 1.6; }
+        code { background: #f2f2f2; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }
+        .timestamp { font-size: 0.9em; color: #888; text-align: center; margin-bottom: 2em; }
+        .container { max-width: 820px; margin: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Informe Técnico de Auditoría</h1>
+        <div class="timestamp">Objetivo: nxtara.com &middot; Generado el 2026-09-09 16:38 UTC</div>
+<h2>Resumen Ejecutivo</h2>
+<p>Se ha realizado una auditoría superficial de la superficie web de <strong>https://nxtara.com</strong> centrada en la respuesta HTTP básica y en la exposición de puertos de red. Los hallazgos confirman que el sitio está accesible mediante los puertos estándar HTTP (80) y HTTPS (443) y además expone los puertos 8080 y 8443. Asimismo, la respuesta del servidor carece de la mayoría de cabeceras de seguridad recomendadas por las mejores prácticas de hardening de aplicaciones web. No se identificaron vulnerabilidades de código o de lógica en la información disponible; sin embargo, la ausencia de controles de seguridad a nivel de transporte y la exposición de puertos adicionales aumentan la superficie de ataque y podrían facilitar la explotación de vulnerabilidades futuras.</p>
+<h2>Hallazgos Detallados</h2>
+<h3>1. Respuesta HTTP exitosa (Código 200) – Informativo</h3>
+<ul><li><strong>Severidad:</strong> Informativa</li><li><strong>Descripción técnica:</strong> La petición GET a <code>https://nxtara.com</code> devuelve un código de estado HTTP 200, indicando que el recurso está disponible y responde correctamente.</li><li><strong>Impacto:</strong> Confirma la operatividad del sitio web, pero por sí solo no implica riesgo de seguridad.</li></ul>
+<h3>2. Cabeceras de seguridad ausentes – Media</h3>
+<ul><li><strong>Severidad:</strong> Media</li><li><strong>Descripción técnica:</strong> La respuesta del servidor no incluye ninguna de las siguientes cabeceras de seguridad:</li><li><strong>Strict-Transport-Security (HSTS)</strong> – fuerza el uso de HTTPS en navegadores.</li><li><strong>Content-Security-Policy (CSP)</strong> – controla los orígenes de recursos y mitiga ataques de inyección de código (XSS).</li><li><strong>X-Frame-Options</strong> – previene clickjacking mediante la restricción de incrustación en frames.</li><li><strong>X-Content-Type-Options</strong> – evita la interpretación errónea de tipos MIME.</li><li><strong>Referrer-Policy</strong> – gestiona la información del encabezado <code>Referer</code> enviada a sitios externos.</li><li><strong>Permissions-Policy</strong> – controla el acceso a APIs del navegador (geolocalización, cámara, etc.).</li><li><strong>Impacto:</strong> La falta de estas cabeceras deja al sitio vulnerable a una serie de técnicas de ataque comunes (p. ej., XSS, clickjacking, downgrade de HTTPS). Un atacante podría aprovechar la ausencia de HSTS para forzar conexiones HTTP y ejecutar ataques de tipo man‑in‑the‑middle, mientras que la ausencia de CSP y X‑Frame‑Options facilita la inyección de contenido malicioso y el clickjacking.</li></ul>
+<h3>3. Puerto 80 (HTTP) abierto – Media</h3>
+<ul><li><strong>Severidad:</strong> Media</li><li><strong>Descripción técnica:</strong> El puerto TCP 80 está abierto y responde a peticiones HTTP sin redirección obligatoria a HTTPS.</li><li><strong>Impacto:</strong> Un cliente puede establecer una conexión no cifrada, lo que permite la intercepción y modificación de datos en tránsito (p. ej., credenciales, tokens). Además, la existencia de HTTP paralelo puede ser utilizada para ataques de downgrade, donde un atacante fuerza al navegador a utilizar la versión no segura del sitio.</li></ul>
+<h3>4. Puerto 443 (HTTPS) abierto – Informativo</h3>
+<ul><li><strong>Severidad:</strong> Informativa</li><li><strong>Descripción técnica:</strong> El puerto TCP 443 está abierto y sirve contenido mediante TLS/SSL.</li><li><strong>Impacto:</strong> La disponibilidad del servicio HTTPS es esperada y necesaria para la operación segura del sitio. No se detecta ninguna anomalía en este punto.</li></ul>
+<h3>5. Puerto 8080 abierto – Media</h3>
+<ul><li><strong>Severidad:</strong> Media</li><li><strong>Descripción técnica:</strong> El puerto TCP 8080 está abierto y accesible desde Internet. En entornos típicos, este puerto se utiliza para servidores de aplicaciones o consolas de administración web.</li><li><strong>Impacto:</strong> Si un servicio no destinado al público está escuchando en este puerto (por ejemplo, una consola de gestión sin autenticación), la exposición podría permitir a un atacante explorar funcionalidades internas, realizar escaneos de versiones, o intentar ataques de fuerza bruta. Sin información adicional sobre el servicio que responde, la presencia del puerto representa un riesgo potencial.</li></ul>
+<h3>6. Puerto 8443 abierto – Media</h3>
+<ul><li><strong>Severidad:</strong> Media</li><li><strong>Descripción técnica:</strong> El puerto TCP 8443 está abierto y normalmente se emplea para servicios HTTPS alternativos (por ejemplo, consolas de administración, APIs internas).</li><li><strong>Impacto:</strong> Al igual que con el puerto 8080, la exposición pública de un puerto típicamente reservado a entornos internos o a administradores aumenta la superficie de ataque. Un atacante podría intentar identificar la aplicación que escucha y explotar vulnerabilidades específicas de esa capa.</li></ul>
+<h2>Recomendaciones Finales</h2>
+<ul><li><strong>Implementar y fortalecer las cabeceras de seguridad HTTP</strong></li><li>Añadir <strong>Strict-Transport-Security</strong> con un <code>max-age</code> de al menos 31536000 segundos y <code>includeSubDomains</code>.</li><li>Definir una política <strong>Content-Security-Policy</strong> restrictiva que solo permita los orígenes de recursos necesarios.</li><li>Configurar <strong>X-Frame-Options: SAMEORIGIN</strong> o <code>DENY</code>.</li><li>Añadir <strong>X-Content-Type-Options: nosniff</strong>.</li><li>Establecer <strong>Referrer-Policy: no-referrer-when-downgrade</strong> (o más restrictiva según necesidad).</li><li>Implementar <strong>Permissions-Policy</strong> para desactivar APIs no requeridas.</li></ul>
+<ul><li><strong>Redirigir todo el tráfico HTTP (puerto 80) a HTTPS</strong></li><li>Configurar una redirección 301 permanente desde <code>http://nxtara.com</code> a <code>https://nxtara.com</code>.</li><li>Evaluar la posibilidad de cerrar el puerto 80 si no es necesario para la compatibilidad.</li></ul>
+<ul><li><strong>Revisar y limitar la exposición de los puertos 8080 y 8443</strong></li><li>Identificar los servicios que escuchan en estos puertos.</li><li>Restringir el acceso mediante firewall a rangos de IP internos o a VPN.</li><li>Si los servicios son administrativos, asegurar que requieran autenticación fuerte (MFA) y cifrado TLS con certificados válidos.</li><li>Deshabilitar los puertos si no son necesarios para la operación pública del sitio.</li></ul>
+<ul><li><strong>Realizar un escaneo de vulnerabilidades más profundo</strong></li><li>Ejecutar pruebas de penetración dirigidas a los servicios que responden en 8080/8443 para confirmar que no existan vulnerabilidades de aplicación subyacentes.</li><li>Verificar la configuración TLS (versión, cifrados, HSTS preloading) en el puerto 443.</li></ul>
+<ul><li><strong>Monitoreo y gestión de parches</strong></li><li>Mantener actualizado el servidor web y los componentes de la pila (frameworks, librerías).</li><li>Implementar registro (logging) y monitoreo de accesos a los puertos críticos para detectar actividad sospechosa.</li></ul>
+<ul><li><strong>Documentación y políticas de seguridad</strong></li><li>Registrar formalmente la configuración de cabeceras y políticas de red en la documentación interna.</li><li>Definir un proceso de revisión periódica (al menos trimestral) de la exposición de puertos y de los encabezados de seguridad.</li></ul>
+<p>---</p>
+<p><strong>Prioridad de implementación:</strong></p>
+<ul><li>Redirección de HTTP a HTTPS y cierre opcional del puerto 80.</li><li>Añadir cabeceras de seguridad HTTP (HSTS y CSP como primeras prioridades).</li><li>Restringir o desactivar los puertos 8080 y 8443.</li><li>Realizar pruebas de penetración focalizadas y reforzar TLS.</li><li>Establecer monitoreo continuo y procesos de revisión.</li></ul>
+<p>La adopción de estas medidas reducirá significativamente la superficie de ataque del sitio y alineará la infraestructura con las mejores prácticas de seguridad web.</p>
+
+    </div>
+</body>
+</html>

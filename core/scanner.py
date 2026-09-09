@@ -1,34 +1,35 @@
 import socket
+from urllib.parse import urlparse
+
 from domain.models import Finding, FindingType
+from core import settings
+
 
 def scan_ports(url: str):
     """
-    Performs a basic TCP port scan on common HTTP/HTTPS ports.
-
-    Attempts to connect to ports 80, 443, 8080, and 8443 on the target host.
-    Returns a list of open ports as findings.
+    Perform a basic TCP port scan on the configured HTTP/HTTPS ports.
 
     Args:
-        url (str): Target URL to extract the host from.
+        url: target URL to extract the host from.
 
     Returns:
-        list[Finding]: A list of findings for each open port detected.
+        list[Finding]: one finding per open port detected.
     """
-    host = url.replace("http://", "").replace("https://", "").split("/")[0]
+    host = urlparse(url).netloc.split("@")[-1].split(":")[0]
     findings = []
 
-    for port in [80, 443, 8080, 8443]:
+    for port in settings.ports_to_scan():
         try:
             sock = socket.create_connection((host, port), timeout=2)
             findings.append(
                 Finding(
                     type=FindingType.PORT,
                     detail=f"Puerto {port} abierto",
-                    extra={"port": port, "status": "open"}
+                    extra={"port": port, "status": "open"},
                 )
             )
             sock.close()
-        except:
+        except OSError:
             continue
 
     return findings
