@@ -227,3 +227,22 @@ reports/
 evidence/
 screenshots/
 *.log
+
+# Pentest generated evidence
+results/
+reports/
+evidence/
+screenshots/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Runtime / sensitive files
+*.log
+*.har
+.env
+.env.*
