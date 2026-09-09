@@ -1,23 +1,25 @@
+"""Generate a professional audit report from findings using Groq."""
 from gpt import prompts, client
+
 
 def generate_summary(data: dict) -> str:
     """
-    Generates a professional web audit summary using GPT.
+    Generate a professional web-audit report using the Groq LLM.
 
     Args:
-        data (dict): Dictionary containing audit metadata and findings.
+        data: dict with audit metadata and findings.
 
     Returns:
-        str: GPT-generated summary report.
+        The generated Markdown report as a string.
     """
     prompt = prompts.summary_prompt(data)
-    openai_client = client.get_client()
-
-    response = openai_client.chat.completions.create(
-        model="gpt-4",
+    return client.chat(
         messages=[
-            {"role": "system", "content": "Eres un experto en ciberseguridad."},
+            {
+                "role": "system",
+                "content": "Eres un experto en ciberseguridad que redacta informes de auditoría claros y accionables.",
+            },
             {"role": "user", "content": prompt},
-        ]
+        ],
+        max_tokens=2048,
     )
-    return response.choices[0].message.content.strip()

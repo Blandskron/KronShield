@@ -1,41 +1,44 @@
-from application.audit_service import audit_website
-from gpt import client
-from domain.models import Finding
-from infra.db import SessionLocal
-from infra.repository import save_findings
-import typer
 import json
-from urllib.parse import urlparse
 import os
 from pathlib import Path
+from urllib.parse import urlparse
+
+import typer
+
+from application.audit_service import audit_website
+from gpt import client
+from infra.db import SessionLocal
+from infra.repository import save_findings
 
 app = typer.Typer()
 
+
 def validate_url(url: str):
-    """
-    Validates that the provided URL contains a scheme and a network location.
-    Exits the application if invalid.
-    """
+    """Validate the URL has a scheme and network location; exit if invalid."""
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         typer.echo("URL inválida. Debe incluir http:// o https://")
         raise typer.Exit(1)
 
+
 @app.command()
 def run(
     url: str = typer.Option(..., "--url", "-u", help="URL a auditar"),
-    token: str = os.getenv("OPENAI_API_KEY"),
+    token: str = typer.Option(
+        None, "--token", "-t", envvar="GROQ_API_KEY",
+        help="API key de Groq (por defecto GROQ_API_KEY del entorno)",
+    ),
 ):
     """
-    Ejecuta una auditoría web y guarda los resultados en un archivo JSON y en la base de datos.
+    Ejecuta una auditoría web y guarda los resultados en JSON y en la base de datos.
 
     - Valida la URL de destino
-    - Inicializa el cliente GPT
-    - Ejecuta la auditoría contra la URL objetivo
-    - Guarda los hallazgos como JSON (en carpeta 'results')
-    - Inserta los hallazgos en la base de datos
+    - Inicializa el cliente Groq (openai/gpt-oss-120b)
+    - Ejecuta la auditoría (recon, puertos, XSS, SQLi)
+    - Guarda hallazgos en results/{dominio}/{dominio}.json y en la base de datos
     """
     validate_url(url)
+    token = token or os.getenv("GROQ_API_KEY")
 
     typer.echo(f"Auditando {url}...")
 
@@ -48,15 +51,14 @@ def run(
 
     serializable = [f.__dict__ for f in findings]
 
-    # Extraer dominio y definir path de salida
     domain = urlparse(url).netloc.replace("www.", "")
     output_dir = Path("results") / domain
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{domain}.json"
 
     try:
-        with open(output_path, "w") as f:
-            json.dump({"url": url, "findings": serializable}, f, indent=2)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump({"url": url, "findings": serializable}, f, indent=2, ensure_ascii=False)
         typer.echo(f"Archivo JSON generado: {output_path}")
     except Exception as e:
         typer.echo(f"Error al guardar JSON: {e}")
@@ -67,3 +69,5 @@ def run(
         typer.echo("Hallazgos guardados en base de datos.")
     except Exception as e:
         typer.echo(f"Error al guardar en la base de datos: {e}")
+
+    typer.echo(f"Auditoría finalizada: {len(findings)} hallazgos.")
