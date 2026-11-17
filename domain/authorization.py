@@ -10,7 +10,9 @@ from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
 Address = IPv4Address | IPv6Address
 Network = IPv4Network | IPv6Network
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_NUMERIC_LABEL = re.compile(r"(?:[0-9]+|0x[0-9a-f]*)")
 _METHOD = re.compile(r"[A-Z][A-Z0-9-]*")
+_MAPPED_IPV4 = IPv6Network("::ffff:0:0/96")
 
 
 def _required_text(value: object, field: str) -> None:
@@ -24,15 +26,32 @@ def utc_instant(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _validate_name(host: str) -> None:
+def validate_dns_name(host: str) -> None:
     # URL parsing and IDNA conversion belong to the target adapter.
     labels = host.split(".")
     if (
         len(host) > 253
         or not all(_HOST_LABEL.fullmatch(label) for label in labels)
-        or not any(char.isalpha() for char in labels[-1])
+        or _NUMERIC_LABEL.fullmatch(labels[-1])
+        or host == "localhost"
+        or host.endswith(".localhost")
     ):
         raise ValueError("Expected a canonical DNS name or a typed IP address")
+
+
+def canonical_address(address: Address) -> Address:
+    if isinstance(address, IPv4Address):
+        return address
+    if not isinstance(address, IPv6Address) or address.scope_id is not None:
+        raise ValueError("Expected a numeric IP without an interface zone")
+    mapped = address.ipv4_mapped
+    return mapped if mapped is not None else address
+
+
+def canonical_network(network: Network) -> Network:
+    if isinstance(network, IPv6Network) and network.subnet_of(_MAPPED_IPV4):
+        return IPv4Network((network.network_address.ipv4_mapped, network.prefixlen - 96))
+    return network
 
 
 def _validate_port(port: int) -> None:
@@ -94,12 +113,13 @@ class ScopeTarget:
     scheme: str | None = None
     path: tuple[str, ...] | None = None
     method: str | None = None
+    trailing_slash: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.host, str):
-            _validate_name(self.host)
-        elif not isinstance(self.host, (IPv4Address, IPv6Address)):
-            raise ValueError("Expected a canonical DNS name or a typed IP address")
+            validate_dns_name(self.host)
+        else:
+            object.__setattr__(self, "host", canonical_address(self.host))
         _required_text(self.environment, "environment")
         if not isinstance(self.attribution, Attribution):
             raise ValueError("Expected a known attribution category")
@@ -109,6 +129,8 @@ class ScopeTarget:
             raise ValueError("Third-party identity requires third-party or shared attribution")
         if self.port is not None:
             _validate_port(self.port)
+        if type(self.trailing_slash) is not bool or (self.trailing_slash and not self.path):
+            raise ValueError("Trailing slash requires a nonempty HTTP path")
         if self.scheme is None:
             if self.path is not None or self.method is not None:
                 raise ValueError("Path and method require an HTTP scheme")
@@ -141,11 +163,15 @@ class ScopeRule:
         if not isinstance(self.effect, RuleEffect) or type(self.subdomains) is not bool:
             raise ValueError("Invalid scope rule effect or subdomains flag")
         if isinstance(self.destination, str):
-            _validate_name(self.destination)
+            validate_dns_name(self.destination)
         elif self.subdomains or not isinstance(
             self.destination, (IPv4Address, IPv6Address, IPv4Network, IPv6Network)
         ):
             raise ValueError("Expected a DNS name, IP address or CIDR")
+        elif isinstance(self.destination, (IPv4Network, IPv6Network)):
+            object.__setattr__(self, "destination", canonical_network(self.destination))
+        else:
+            object.__setattr__(self, "destination", canonical_address(self.destination))
         if self.attribution is not None and not isinstance(self.attribution, Attribution):
             raise ValueError("Expected a known attribution category")
         if self.attribution in {Attribution.THIRD_PARTY, Attribution.SHARED}:
