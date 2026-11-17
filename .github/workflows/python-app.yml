@@ -19,6 +19,14 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Reject tracked runtime artifacts
+      shell: bash
+      run: |
+        tracked_ignored=$(git ls-files -ci --exclude-per-directory=.gitignore)
+        if [ -n "$tracked_ignored" ]; then
+          echo "Tracked paths match .gitignore. Review the index locally before publishing."
+          exit 1
+        fi
     - name: Set up Python 3.10
       uses: actions/setup-python@v3
       with:
@@ -36,4 +44,4 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest
+        python -m pytest

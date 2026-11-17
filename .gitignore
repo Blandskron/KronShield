@@ -205,16 +205,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-pentest.db
-
 # SQLite databases
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
-
-# Local databases
 *.db
 *.db-shm
 *.db-wal
@@ -223,26 +214,12 @@ pentest.db
 
 # Pentest evidence / generated results
 results/
-reports/
+reports/*
+!reports/report_html.py
 evidence/
 screenshots/
-*.log
-
-# Pentest generated evidence
-results/
-reports/
-evidence/
-screenshots/
-
-# Local databases
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-*.sqlite3
 
 # Runtime / sensitive files
-*.log
 *.har
-.env
 .env.*
+!.env.example
