@@ -12,6 +12,7 @@ Network = IPv4Network | IPv6Network
 _HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _NUMERIC_LABEL = re.compile(r"(?:[0-9]+|0x[0-9a-f]*)")
 _METHOD = re.compile(r"[A-Z][A-Z0-9-]*")
+_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 _MAPPED_IPV4 = IPv6Network("::ffff:0:0/96")
 
 
@@ -66,9 +67,8 @@ def _path_segments(value: tuple[str, ...]) -> tuple[str, ...]:
     for segment in segments:
         if (
             not isinstance(segment, str)
-            or segment in {"", ".", ".."}
-            or any(char in segment for char in "/\\%?#")
-            or any(ord(char) <= 32 or ord(char) == 127 for char in segment)
+            or not _PATH_SEGMENT.fullmatch(segment)
+            or segment in {".", ".."}
         ):
             raise ValueError("Expected canonical path segments")
     return segments
@@ -129,17 +129,20 @@ class ScopeTarget:
             raise ValueError("Third-party identity requires third-party or shared attribution")
         if self.port is not None:
             _validate_port(self.port)
-        if type(self.trailing_slash) is not bool or (self.trailing_slash and not self.path):
-            raise ValueError("Trailing slash requires a nonempty HTTP path")
+        if type(self.trailing_slash) is not bool:
+            raise ValueError("Expected a boolean trailing slash flag")
         if self.scheme is None:
-            if self.path is not None or self.method is not None:
+            if self.path is not None or self.method is not None or self.trailing_slash:
                 raise ValueError("Path and method require an HTTP scheme")
             return
         if self.scheme not in {"http", "https"} or self.port is None or self.path is None:
             raise ValueError("HTTP targets require a scheme, effective port and path")
         if not isinstance(self.method, str) or not _METHOD.fullmatch(self.method):
             raise ValueError("HTTP targets require a canonical method")
-        object.__setattr__(self, "path", _path_segments(self.path))
+        path = _path_segments(self.path)
+        if self.trailing_slash and not path:
+            raise ValueError("Trailing slash requires a nonempty HTTP path")
+        object.__setattr__(self, "path", path)
 
 
 @dataclass(frozen=True)

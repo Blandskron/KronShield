@@ -1,5 +1,7 @@
 import requests
 
+from application.transport import SafeTransport
+from domain.authorization import ScopeTarget
 from domain.models import Finding, FindingType
 from core import settings
 
@@ -31,19 +33,33 @@ def run(url: str):
     except Exception as e:
         return [Finding(type=FindingType.ERROR, detail=str(e), url=url)]
 
+    return _observations(url, response.status_code, dict(response.headers))
+
+
+def run_authorized(target: ScopeTarget, transport: SafeTransport) -> list[Finding]:
+    """Collect selective HTTP metadata through the scope-gated transport."""
+    response = transport.http(target)
+    recorded_headers = {"server", *(header.lower() for header in _SECURITY_HEADERS)}
+    headers = {
+        name: value for name, value in response.headers if name.lower() in recorded_headers
+    }
+    return _observations(response.url, response.status, headers)
+
+
+def _observations(url: str, status: int, headers: dict[str, str]) -> list[Finding]:
+    present = {name.lower(): value for name, value in headers.items()}
     findings = [
         Finding(
             type=FindingType.INFO,
-            detail=f"Status code: {response.status_code}",
+            detail=f"Status code: {status}",
             url=url,
             extra={
-                "server": response.headers.get("Server"),
-                "headers": dict(response.headers),
+                "server": present.get("server"),
+                "headers": headers,
             },
         )
     ]
 
-    present = {h.lower() for h in response.headers}
     missing = [h for h in _SECURITY_HEADERS if h.lower() not in present]
     if missing:
         findings.append(

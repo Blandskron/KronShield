@@ -19,7 +19,6 @@ from domain.authorization import (
 
 
 _AUTHORITY = re.compile(r"(\[[0-9A-Fa-f:.]+\]|[^\[\]:]+)(?::([1-9][0-9]{0,4}))?")
-_PATH_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 _PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _PRIVATE = tuple(ip_network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"))
 _NON_TARGETS = tuple(ip_network(cidr) for cidr in (
@@ -93,9 +92,6 @@ def canonical_http_target(
         path = tuple(unquote(segment, errors="strict") for segment in raw_segments)
     except UnicodeError:
         raise ValueError("Invalid URL path encoding") from None
-    if any(not _PATH_SEGMENT.fullmatch(segment) or segment in {".", ".."} for segment in path):
-        raise ValueError("URL path contains unsupported or ambiguous characters")
-
     return ScopeTarget(
         host=host, environment=environment, attribution=attribution, third_party_id=third_party_id,
         port=port, scheme=parts.scheme, path=path, method=method,
