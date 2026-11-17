@@ -21,6 +21,8 @@ La primera ejecución de v0.5.0 queda confinada a red de laboratorio y usa docum
 
 Una autorización aprobada vincula organización, proyecto, identidad legal/operativa de quien delega, quién verificó, referencia y SHA-256 del documento, ventanas UTC, entorno, técnicas, reglas de destino, terceros, cuotas y exclusiones. El auditor guarda documento restringido y revisa cobertura y titularidad. Registro creado, aprobado, revocado o expirado. Una corrección crea revisión nueva. Los jobs amarran hash de plan, versión de política y revisión exacta. Revocar invalida permisos activos y futuros. Para repetición programada aplicar el plan a cada ocurrencia y omitir ejecuciones fuera de ventana.
 
+TASK-002 introduce la decisión de dominio sobre una revisión explícita, con un entorno por revisión y tiempo inyectado. Las reglas de subdominio requieren un límite de etiqueta y el dominio raíz se concede mediante su propia regla. Un permiso para terceros o servicios compartidos exige categoría e identificador coincidentes. Una exclusión sin categoría aplica a todas. El evaluador recibe destinos canónicos y atribución desde contexto confiable. TASK-003 incorpora interpretación de URLs y resolución segura, y TASK-006 aplica la decisión al camino activo de la CLI.
+
 Orden obligatorio por intento de conexión:
 
 1. Exigir membresía, rol, política habilitada, autorización vigente, plan aprobado si corresponde, target de inventario y versión válida del adaptador.
