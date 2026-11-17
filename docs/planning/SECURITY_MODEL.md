@@ -1,0 +1,47 @@
+# Modelo de seguridad y operación
+
+## Activos, actores y fronteras
+
+Activos: autorización firmada, membresías, credenciales efímeras, evidencia, logs y capacidad de enviar tráfico. Actores: observador, operador, aprobador, administrador de organización, administrador de plataforma, identidad de servicio, objetivo y proveedor LLM. Identidad/roles ingresan por API; operador y objetivos se tratan como fuentes de entrada no confiables. El administrador de plataforma opera salud y kill switch global. El acceso de soporte a datos de proyectos requiere una asignación auditada.
+
+| Amenaza | Frontera | Control y prueba |
+|---|---|---|
+| Aislamiento roto e IDOR | Identidad → API/DB/objetos | Permiso de acción + membresía + RLS + FK compuesta. Validar recursos ajenos en API, SSE, worker y descarga. |
+| SSRF, rebinding, redirects | Intención → conexión | Canonicalización, DNS controlado, política por IP, pin, chequeo de peer, TLS original y egress. Fixtures de IP mixta, mapeada e intento de rebinding. |
+| Agotamiento o impacto remoto | Runner → objetivo | Presupuesto duro acumulativo y límites compartidos más cancelación. Parar en 429/423, errores repetidos o señal de monitoreo configurada. |
+| Shell o fuga desde herramientas | Catálogo → proceso | Argumentos cerrados, perfil aislado, manifiesto versionado, sin rutas ni flags del usuario. Prueba de canario y de bloqueo de destinos. |
+| Manipulación o fuga de evidencia | Ejecución → almacén/descarga | Cifrado, hash, segregación de permisos y eventos encadenados con anclaje externo. Prueba de modificación y rotación. |
+| Inyección indirecta y exfiltración | Evidencia → LLM | Vista redactada, datos delimitados, herramientas tipadas de lectura, sin privilegios de ejecución. Prueba con instrucciones hostiles y secretos sintéticos. |
+| Repetición o carreras | Cola → worker → persistencia | Idempotencia, lease y fencing, cuotas atómicas, salida cerrada si controles indisponibles. Prueba de redelivery y pérdida de conexión. |
+| Acciones encubiertas en reportes | Evidencia → presentación | HTML escapado, sin scripts, cabeceras de descarga, CSP en origen de artefactos dedicado, publicación aprobada. |
+
+## Decisión de ejecución
+
+La primera ejecución de v0.5.0 queda confinada a red de laboratorio y usa documentos, objetivos y evidencias sintéticos. Su gate incluye bitácora append-only por roles, objetos cifrados, política de salida, cancelación y kill switch. El anclaje externo de v0.8.0 y las pruebas de puesta en servicio de v1.0.0 son condición para abrir perfil R1 a activos de clientes.
+
+Una autorización aprobada vincula organización, proyecto, identidad legal/operativa de quien delega, quién verificó, referencia y SHA-256 del documento, ventanas UTC, entorno, técnicas, reglas de destino, terceros, cuotas y exclusiones. El auditor guarda documento restringido y revisa cobertura y titularidad. Registro creado, aprobado, revocado o expirado. Una corrección crea revisión nueva. Los jobs amarran hash de plan, versión de política y revisión exacta. Revocar invalida permisos activos y futuros. Para repetición programada aplicar el plan a cada ocurrencia y omitir ejecuciones fuera de ventana.
+
+Orden obligatorio por intento de conexión:
+
+1. Exigir membresía, rol, política habilitada, autorización vigente, plan aprobado si corresponde, target de inventario y versión válida del adaptador.
+2. Interpretar URL estricta HTTP(S), hostname IDNA normalizado con un punto final eliminado, puerto efectivo y segmentos canónicos. Rechazar credenciales, fragmento, caracteres de control, autoridad ambigua, codificaciones que cambien delimitadores y formas numéricas de IP ambiguas. Una regla de ruta aplica por límite de segmento. Un subdominio aplica por límite de etiqueta con opt-in separado para raíz. Evaluar exclusiones antes de permitir.
+3. Resolver A/AAAA con resolver controlado, canonizar IPv4-mapped, evaluar todas las IP y CNAME respecto a alcance y tercero. Requerir destino nominativo autorizado y reglas IP/red aplicables. Para DNS público el alcance puede permitir clase pública con reglas de terceros explícitas. Una mezcla de respuestas permitidas y prohibidas deniega. Nunca permitir metadata, multicast, direcciones no especificadas ni redes del plano de control. En producción las IP privadas precisan CIDR explícito y runner dedicado. Loopback se reserva al fixture local embebido en pruebas. El laboratorio Compose usa una red separada y reglas explícitas de laboratorio.
+4. Registrar decisión y reservar cuota de forma atómica antes de IO. Conectar exclusivamente a IP permitida, verificar peer, conservar SNI y verificación del certificado contra hostname original. El sistema no hereda proxy del entorno. El perfil inicial rechaza redirecciones. Si se habilitan por técnica, resolver Location y repetir toda la política por salto con máximo 3, descartando credenciales entre orígenes.
+5. Revalidar antes de cada operación, incluso sobre conexiones reutilizadas, y al renovar permisos de salida. Mantener revocación de streams vivos. Registrar origen, destino autorizado y efectivo, timestamp, regla, actor, técnica, versión, conteo y resultado redactado.
+
+## Riesgo y límites
+
+| Clase | Operación | Autorización |
+|---|---|---|
+| R0 | Análisis offline y revisión documental | Permiso del proyecto y procedencia del artefacto |
+| R1 | Inventario DNS/HTTP/TLS/TCP acotado | Autorización verificada, plan ajustado a alcance y límites |
+| R2 | DAST no destructivo y escenarios autenticados de laboratorio | R1 + aprobador distinto de solicitante, aprobación por revisión del plan |
+| R3 | Explotación controlada, simulación de identidad o adversaria, validación con impacto potencial | Perfil desactivado por defecto, especialista supervisa, evidencia y aprobación independiente por ejecución, permiso explícito de técnicas y rollback |
+
+Valores iniciales R1 propuestos: 1 solicitud/s por objetivo, ráfaga 1, 2 jobs concurrentes por organización, 1 por objetivo, 30 operaciones, 120 s de reloj, 256 KiB de cuerpo inspeccionado por respuesta y 4 MiB de tráfico de aplicación por job. Aplicar el mínimo entre límite de plataforma, autorización, objetivo, perfil y plan. Debitar DNS, conexiones, intentos y saltos del presupuesto, incluso si fallan. Implementar límites de transporte independientes para cabeceras, compresión y tiempo absoluto. Reducir cuotas ante respuestas de saturación. R2/R3 requieren límites por técnica, nunca heredan automáticamente límites más amplios.
+
+Cancelación: API revoca lease de salida y marca `cancel_requested` con evento durable. Los checks cooperativos paran en el siguiente punto. Supervisor corta egress y envía TERM, con KILL al grupo antes de 2 s desde la revocación en laboratorio. Registrar confirmación de muerte o `interrupted` ante pérdida de supervisor. El cliente muestra solic./confirmación por separado. Kill switch de organización y global persiste monotónicamente, invalida leases y evita nuevas conexiones. Reactivación es explícita y aprobada. Los jobs anteriores requieren nueva solicitud.
+
+## Evidencia, datos y operación
+
+Identidades de servicio por componente. Tokens de corta vida y secretos de solo lectura, provisionados a ejecuciones autorizadas; prohibir montaje de llaves maestras al ejecutor. Evidencia redactada para vistas y logs. Artefactos restringidos por rol y auditoría de lectura. AES-GCM administrado por almacén/KMS, retención inicial configurable de 90 días para artefactos y 365 para bitácora técnica, con retención legal y borrado auditados. Cada evento de bitácora toma secuencia y hash anterior en transacción. Anclar encabezado firmado cada hora en almacén WORM, con detección de retrasos. Entre anclajes existe una ventana de manipulación por administrador de infraestructura. Usar sincronización de reloj, verificación de restauración y registro de acceso al ancla. Las pruebas lab de R3 usan exclusivamente identidades, datos y endpoints sintéticos. Quedan fuera del producto la persistencia encubierta, evasión, propagación y extracción de datos reales.
