@@ -5,22 +5,46 @@ from math import isfinite
 from time import monotonic
 
 import dns.exception
+import dns.message
 import dns.name
+import dns.query
+import dns.rcode
+import dns.rdataclass
 import dns.rdatatype
 import dns.resolver
 
 from application.resolve_target import DnsRecords, ResolutionFailure
 from domain.authorization import Address, canonical_address, validate_dns_name
+from domain.budget import BudgetLimits, ExecutionBudget
 
 
 class DnsResolver:
-    def __init__(self, nameservers: tuple[Address, ...], *, timeout: float = 2.0):
+    def __init__(
+        self, nameservers: tuple[Address, ...], *, timeout: float = 2.0, budget: ExecutionBudget | None = None,
+    ):
         servers = tuple(canonical_address(address) for address in nameservers)
         if not servers or not isfinite(timeout) or timeout <= 0:
             raise ValueError("A numeric recursive resolver and a positive finite timeout are required")
-        self._resolver = dns.resolver.Resolver(configure=False)
-        self._resolver.nameservers = [str(address) for address in servers]
+        self._nameservers = servers
         self._timeout = timeout
+        self._budget = budget if budget is not None else ExecutionBudget(BudgetLimits())
+
+    def _query(self, name: dns.name.Name, record_type: dns.rdatatype.RdataType, deadline: float):
+        request = dns.message.make_query(name, record_type)
+        for server in self._nameservers:
+            remaining = min(deadline - monotonic(), self._budget.remaining_seconds())
+            if remaining <= 0:
+                raise ResolutionFailure("DNS deadline elapsed")
+            self._budget.charge_attempt()
+            try:
+                response = dns.query.tcp(request, str(server), timeout=remaining)
+            except (dns.exception.DNSException, OSError, EOFError):
+                continue
+            if response.rcode() == dns.rcode.NOERROR:
+                return dns.resolver.Answer(name, record_type, dns.rdataclass.IN, response)
+            if response.rcode() == dns.rcode.NXDOMAIN:
+                raise ResolutionFailure("DNS name does not exist")
+        raise ResolutionFailure("DNS lookup failed")
 
     def resolve(self, host: str) -> DnsRecords:
         validate_dns_name(host)
@@ -33,12 +57,7 @@ class DnsResolver:
                 (dns.rdatatype.A, IPv4Address),
                 (dns.rdatatype.AAAA, IPv6Address),
             ):
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    raise ResolutionFailure("DNS deadline elapsed")
-                answer = self._resolver.resolve(
-                    name, record_type, search=False, lifetime=remaining, raise_on_no_answer=False,
-                )
+                answer = self._query(name, record_type, deadline)
                 # Both families must observe the same ordered alias chain. NODATA
                 # is valid for one family, but timeouts and NXDOMAIN fail closed.
                 result = answer.response.resolve_chaining()

@@ -7,13 +7,18 @@ from functools import partial
 from ipaddress import ip_address
 from unittest.mock import MagicMock, Mock
 
+import dns.message
+import dns.rdatatype
+import dns.rrset
 import pytest
 
 from adapters import transport as adapter
+from adapters.dns import DnsResolver
 from application.resolve_target import DestinationDenied, DestinationReason, DnsRecords, ResolvedTarget, resolve_target
 from application.transport import TransportFailure, TransportReason
 from core import recon, scanner
 from domain.authorization import Attribution, Authorization, AuthorizationStatus, RuleEffect, ScopeRule, ScopeTarget
+from domain.budget import BudgetExceeded, BudgetLimits, BudgetReason, ExecutionBudget
 from domain.targets import AddressPolicy, canonical_http_target
 
 
@@ -170,7 +175,7 @@ def test_dns_is_rechecked_and_rebinding_cannot_open_another_socket(socket_factor
     )
     connection = fake_socket()
     socket_factory.return_value = connection
-    transport = adapter.PinnedTransport(verify)
+    transport = adapter.PinnedTransport(verify, budget=ExecutionBudget(BudgetLimits(burst=2)))
 
     assert transport.http(TARGET).peer == IP
     with pytest.raises(DestinationDenied) as error:
@@ -210,7 +215,8 @@ def test_exact_body_budget_and_head_metadata(socket_factory):
         fake_socket(OK),
         fake_socket(b"HTTP/1.1 200 OK\r\nContent-Length: 9999\r\n\r\n"),
     ]
-    transport = adapter.PinnedTransport(pinned_resolver(), max_body_bytes=2)
+    budget = ExecutionBudget(BudgetLimits(burst=2))
+    transport = adapter.PinnedTransport(pinned_resolver(), max_body_bytes=2, budget=budget)
     assert transport.http(TARGET).body == b"ok"
     assert transport.http(replace(TARGET, method="HEAD")).body == b""
 
@@ -282,3 +288,83 @@ def test_typed_http_target_cannot_bypass_url_path_validation():
         replace(TARGET, path=("..;", "admin"))
     with pytest.raises(ValueError, match="nonempty HTTP path"):
         replace(TARGET, path=iter(()))
+
+
+def test_operation_limit_denies_before_resolving_or_opening_a_new_socket(socket_factory):
+    budget = ExecutionBudget(BudgetLimits(max_operations=1, burst=2))
+    resolve = pinned_resolver()
+    connection = fake_socket()
+    socket_factory.return_value = connection
+    transport = adapter.PinnedTransport(resolve, budget=budget)
+
+    assert transport.http(TARGET).body == b"ok"
+    with pytest.raises(BudgetExceeded) as error:
+        transport.http(TARGET)
+
+    assert error.value.reason is BudgetReason.OPERATIONS
+    resolve.assert_called_once_with(TARGET)
+    socket_factory.assert_called_once()
+    assert budget.usage().bytes == len(connection.sendall.call_args.args[0]) + len(OK)
+
+
+def test_transport_never_reads_beyond_the_remaining_job_budget(socket_factory):
+    request_size = len(
+        b"GET /api/status/ HTTP/1.1\r\nHost: scope.example:8080\r\n"
+        b"Accept-Encoding: identity\r\nConnection: close\r\n\r\n"
+    )
+    allowance = len(OK) - 1
+    budget = ExecutionBudget(BudgetLimits(max_bytes=request_size + allowance))
+    connection = fake_socket()
+    socket_factory.return_value = connection
+
+    with pytest.raises(BudgetExceeded) as error:
+        adapter.PinnedTransport(pinned_resolver(), budget=budget).http(TARGET)
+
+    assert error.value.reason is BudgetReason.BYTES
+    connection.recv_into.assert_called_once()
+    assert len(connection.recv_into.call_args.args[0]) == allowance
+    assert budget.usage().bytes == request_size + allowance
+
+
+def test_request_larger_than_the_budget_cannot_resolve_or_connect(socket_factory):
+    budget = ExecutionBudget(BudgetLimits(max_bytes=1))
+    resolve = pinned_resolver()
+
+    with pytest.raises(BudgetExceeded) as error:
+        adapter.PinnedTransport(resolve, budget=budget).http(TARGET)
+
+    assert error.value.reason is BudgetReason.BYTES
+    resolve.assert_not_called()
+    socket_factory.assert_not_called()
+    assert budget.usage().operations == budget.usage().bytes == 0
+
+
+def test_dns_and_target_connection_share_one_attempt_budget(socket_factory, monkeypatch):
+    now = datetime(2026, 11, 17, tzinfo=timezone.utc)
+    authorization = Authorization(
+        "auth", 1, "org", "project", "owner", "proof", "a" * 64, AuthorizationStatus.APPROVED,
+        now - timedelta(minutes=1), now + timedelta(minutes=1), "lab", frozenset({"web"}),
+        (ScopeRule("name", RuleEffect.ALLOW, TARGET.host), ScopeRule("ip", RuleEffect.ALLOW, IP)), "reviewer",
+    )
+
+    def reply(request, nameserver, *, timeout):
+        response = dns.message.make_response(request)
+        question, = request.question
+        if question.rdtype == dns.rdatatype.A:
+            response.answer.append(dns.rrset.from_text(question.name, 30, "IN", "A", str(IP)))
+        return dns.message.from_wire(response.to_wire())
+
+    exchange = Mock(side_effect=reply)
+    monkeypatch.setattr("dns.query.tcp", exchange)
+    budget = ExecutionBudget(BudgetLimits(max_operations=2))
+    verify = partial(
+        resolve_target, authorization=authorization, organization_id="org", project_id="project", technique="web",
+        clock=lambda: now, resolver=DnsResolver((ip_address("10.20.30.53"),), budget=budget),
+        address_policy=AddressPolicy(), lookup_attribution=lambda host: (Attribution.FIRST_PARTY, None),
+    )
+    with pytest.raises(BudgetExceeded) as error:
+        adapter.PinnedTransport(verify, budget=budget).http(TARGET)
+
+    assert error.value.reason is BudgetReason.OPERATIONS
+    assert exchange.call_count == budget.usage().operations == 2
+    socket_factory.assert_not_called()

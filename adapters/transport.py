@@ -13,17 +13,18 @@ from time import monotonic
 from application.resolve_target import ResolvedTarget
 from application.transport import HttpObservation, TransportFailure, TransportReason
 from domain.authorization import Address, ScopeTarget, canonical_address
+from domain.budget import BudgetLimits, ExecutionBudget
 
 
 _HEADER_BYTES = 64 * 1024
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
-def _remaining(deadline: float) -> float:
+def _remaining(deadline: float, budget: ExecutionBudget) -> float:
     remaining = deadline - monotonic()
     if remaining <= 0:
         raise TransportFailure(TransportReason.TIMED_OUT)
-    return remaining
+    return min(remaining, budget.remaining_seconds())
 
 
 def _verify_peer(connection: socket.socket, address: Address, port: int) -> None:
@@ -47,10 +48,11 @@ def _request_parts(target: ScopeTarget) -> tuple[str, str]:
 
 
 class _ResponseReader(io.RawIOBase):
-    def __init__(self, connection: socket.socket, deadline: float):
+    def __init__(self, connection: socket.socket, deadline: float, budget: ExecutionBudget):
         super().__init__()
         self._connection = connection
         self._deadline = deadline
+        self._budget = budget
         self.remaining_bytes = _HEADER_BYTES
 
     def readable(self) -> bool:
@@ -59,8 +61,11 @@ class _ResponseReader(io.RawIOBase):
     def readinto(self, buffer) -> int:
         if not self.remaining_bytes:
             raise TransportFailure(TransportReason.WIRE_LIMIT)
-        self._connection.settimeout(_remaining(self._deadline))
-        count = self._connection.recv_into(memoryview(buffer)[:self.remaining_bytes])
+        view = memoryview(buffer)
+        self._connection.settimeout(_remaining(self._deadline, self._budget))
+        count = self._budget.read(
+            min(len(view), self.remaining_bytes), lambda size: self._connection.recv_into(view[:size]),
+        )
         self.remaining_bytes -= count
         return count
 
@@ -79,6 +84,7 @@ class PinnedTransport:
         timeout: float = 10,
         max_body_bytes: int = 256 * 1024,
         tls_context: ssl.SSLContext | None = None,
+        budget: ExecutionBudget | None = None,
     ):
         if not isfinite(timeout) or timeout <= 0:
             raise ValueError("Expected a positive finite transport timeout")
@@ -86,7 +92,8 @@ class PinnedTransport:
             raise ValueError("Expected a nonnegative response body byte limit")
         self._resolve = resolve
         self._timeout = timeout
-        self._max_body_bytes = max_body_bytes
+        self._budget = budget if budget is not None else ExecutionBudget(BudgetLimits())
+        self._max_body_bytes = min(max_body_bytes, self._budget.limits.max_response_bytes)
         self._tls_context = tls_context if tls_context is not None else ssl.create_default_context()
         if not self._tls_verifies_identity():
             raise ValueError("TLS requires trusted certificates and hostname verification")
@@ -107,7 +114,8 @@ class PinnedTransport:
             raise TransportFailure(TransportReason.INVALID_RESOLUTION) from None
         if target.scheme == "https" and not self._tls_verifies_identity():
             raise TransportFailure(TransportReason.TLS_FAILED)
-        remaining = _remaining(deadline)
+        remaining = _remaining(deadline, self._budget)
+        self._budget.charge_attempt()
         family = socket.AF_INET6 if isinstance(address, IPv6Address) else socket.AF_INET
         endpoint = (str(address), target.port, 0, 0) if family == socket.AF_INET6 else (str(address), target.port)
         try:
@@ -116,7 +124,7 @@ class PinnedTransport:
                 connection.connect(endpoint)
                 _verify_peer(connection, address, target.port)
                 if target.scheme == "https":
-                    connection.settimeout(_remaining(deadline))
+                    connection.settimeout(_remaining(deadline, self._budget))
                     with self._tls_context.wrap_socket(connection, server_hostname=str(target.host)) as tls:
                         _verify_peer(tls, address, target.port)
                         yield tls, address
@@ -140,10 +148,18 @@ class PinnedTransport:
             "Accept-Encoding: identity\r\n"
             "Connection: close\r\n\r\n"
         ).encode("ascii")
+        with self._budget.operation():
+            self._budget.require_bytes(len(request))
+            return self._send_http(target, deadline, authority, path, request)
+
+    def _send_http(
+        self, target: ScopeTarget, deadline: float, authority: str, path: str, request: bytes,
+    ) -> HttpObservation:
         with self._open(target, deadline) as (connection, peer):
-            connection.settimeout(_remaining(deadline))
+            connection.settimeout(_remaining(deadline, self._budget))
+            self._budget.charge_write(len(request))
             connection.sendall(request)
-            reader = _ResponseReader(connection, deadline)
+            reader = _ResponseReader(connection, deadline, self._budget)
             try:
                 with http.client.HTTPResponse(reader, method=target.method) as response:
                     response.begin()
@@ -169,13 +185,13 @@ class PinnedTransport:
                             raise TransportFailure(TransportReason.INVALID_HTTP)
             except http.client.HTTPException:
                 raise TransportFailure(TransportReason.INVALID_HTTP) from None
-            _remaining(deadline)
+            _remaining(deadline, self._budget)
         return HttpObservation(f"{target.scheme}://{authority}{path}", peer, status, headers, body)
 
     def tcp(self, target: ScopeTarget) -> Address:
         if target.scheme is not None or target.port is None:
             raise TransportFailure(TransportReason.INVALID_OPERATION)
         deadline = monotonic() + self._timeout
-        with self._open(target, deadline) as (_, peer):
-            _remaining(deadline)
+        with self._budget.operation(), self._open(target, deadline) as (_, peer):
+            _remaining(deadline, self._budget)
             return peer

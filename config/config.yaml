@@ -11,6 +11,16 @@
 timeouts:
   request: 10
 
+# Process-local budget per authorized audit job.
+execution:
+  max_operations: 30
+  max_bytes: 4194304
+  max_response_bytes: 262144
+  max_seconds: 120
+  operations_per_second: 1
+  burst: 1
+  max_concurrent: 2
+
 ports_to_scan: [80, 443, 8080, 8443]
 
 # LLM provider: Groq (https://console.groq.com/keys)
