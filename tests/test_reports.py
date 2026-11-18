@@ -8,20 +8,12 @@ from gpt import client
 from reports.report_html import generate_html_report
 
 
-def test_clean_payloads_strips_markers_and_fences():
-    raw = "```\n1. <script>alert(1)</script>\n- ' OR '1'='1\n\n`plain`\n```"
-    cleaned = client._clean_payloads(raw)
-    assert "<script>alert(1)</script>" in cleaned
-    assert "' OR '1'='1" in cleaned
-    assert "plain" in cleaned
-    assert all(not p.startswith("```") for p in cleaned)
-
-
-def test_groq_payloads_use_mock_transport(monkeypatch):
+def test_groq_summary_client_uses_mock_transport(monkeypatch):
     response = httpx.Response(200, json={
-        "choices": [{"message": {"role": "assistant", "content": "1. fixture-marker"}}],
+        "choices": [{"message": {"role": "assistant", "content": "  Resumen simulado  "}}],
     })
     reply = Mock(return_value=response)
+    messages = [{"role": "user", "content": "fixture prompt"}]
 
     with httpx.Client(transport=httpx.MockTransport(reply)) as transport:
         monkeypatch.setattr(client, "_client", Groq(
@@ -30,14 +22,14 @@ def test_groq_payloads_use_mock_transport(monkeypatch):
             http_client=transport,
             max_retries=0,
         ))
-        assert client.generate_payloads("fixture prompt") == ["fixture-marker"]
+        assert client.chat(messages, max_tokens=512) == "Resumen simulado"
 
     reply.assert_called_once()
     request = reply.call_args.args[0]
     assert request.method == "POST"
     assert request.url.path == "/openai/v1/chat/completions"
     body = json.loads(request.content)
-    assert body["messages"][-1] == {"role": "user", "content": "fixture prompt"}
+    assert body["messages"] == messages
 
 
 def test_html_report_renders_sections(tmp_path, monkeypatch):

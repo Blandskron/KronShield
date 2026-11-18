@@ -1,96 +1,46 @@
-# Pentest Agent
+# BLANDSKRON Pentest Agent
 
-**Pentest Agent** es una herramienta de auditoría web automatizada que combina técnicas
-clásicas de pentesting con la redacción automática de informes mediante un modelo LLM
-servido por **Groq** (`openai/gpt-oss-120b`), entregando resultados claros, ejecutivos y accionables.
-
-> Uso exclusivo para auditorías **autorizadas** sobre sistemas propios o con consentimiento explícito.
-
-## Características
-
-- Escaneo de puertos abiertos comunes (80/443/8080/8443, configurable)
-- Reconocimiento pasivo: status HTTP, fingerprint de servidor y cabeceras de seguridad ausentes
-- Testeo de XSS reflejado y SQL Injection con payloads generados por LLM (con fallback estático)
-- Persistencia de hallazgos en base de datos SQLite
-- Generación de informes en lenguaje natural con Groq / `openai/gpt-oss-120b`
-- Exportación de informes en HTML
-- Arquitectura por capas (`core`, `domain`, `infra`, `application`, `cli`, `gpt`, `reports`)
-
-## Requisitos
-
-- Python 3.10+
-- API Key de Groq (https://console.groq.com/keys), almacenada como `GROQ_API_KEY`
-- Recomendado: entorno virtual (`venv`)
+CLI para preparar auditorías autorizadas y analizar respuestas HTTP guardadas. La ejecución activa está deshabilitada en esta etapa. El laboratorio integrado, el frontend y Docker Compose se detallan en el [plan de implementación](docs/planning/README.md).
 
 ## Instalación
 
+Se requiere Python 3.10 o posterior.
+
 ```bash
-git clone https://github.com/tuusuario/pentest-agent.git
+git clone https://github.com/Blandskron/pentest-agent.git
 cd pentest-agent
-
-python -m venv venv
-source venv/bin/activate  # En Windows: venv\Scripts\activate
-
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-## Configuración
+En PowerShell, activa el entorno con `.\.venv\Scripts\Activate.ps1` antes de instalar las dependencias.
 
-Crea el archivo `config/.env` (ya está en `.gitignore`, no se versiona):
+## Planificación y análisis local
 
 ```bash
-GROQ_API_KEY=tu_api_key_de_groq
-GROQ_MODEL=openai/gpt-oss-120b   # opcional, sobreescribe config.yaml
+python main.py audit plan --url https://scope.example/api/ --environment lab
+python main.py audit plan --url https://scope.example:8443 --profile tcp-baseline
+python main.py audit analyze --input respuesta.txt --check xss --marker test-marker
+python main.py audit analyze --input respuesta.txt --check sqli
 ```
 
-Los parámetros del modelo y del escaneo se ajustan en `config/config.yaml`
-(sección `llm`: `model`, `temperature`, `top_p`, `max_completion_tokens`, `reasoning_effort`).
+`audit plan` valida la estructura del destino y muestra el perfil, el presupuesto configurado y el estado de ejecución. El plan local indica `missing_authorization` y `disabled`. La CLI actual solo genera una vista previa, sin consultar DNS ni servicios. El laboratorio integrado se habilitará en v0.5.0.
 
-Inicializa la base de datos una vez:
+`audit analyze` recibe un cuerpo HTTP guardado en UTF-8 de hasta 256 KiB. Reporta indicadores que requieren corroboración. Los comandos de planificación y análisis funcionan sin una clave Groq.
+
+Si conservas un `config/config.yaml` anterior, elimina `xss_payloads` y `sqli_payloads`. Los parámetros de límites se configuran en `execution`. El comando heredado `audit run` informa que la ejecución activa está cerrada.
+
+## Informes guardados
+
+`report generate` sigue procesando el JSON de auditorías anteriores. Envía los hallazgos a Groq para redactar el informe. Úsalo con datos autorizados para ese proveedor. Configura `GROQ_API_KEY` en el entorno o en `config/.env` y ejecuta:
 
 ```bash
-python migrate.py
+python main.py report generate --input ruta/al/resultado.json
 ```
 
-## Ejecución
-
-```bash
-# 1. Ejecutar auditoría web
-python main.py audit run -u https://nxtara.com
-
-# Genera: results/nxtara.com/nxtara.com.json  y guarda hallazgos en pentest.db
-
-# 2. Generar informe HTML profesional
-python main.py report generate -i results/nxtara.com/nxtara.com.json
-# Genera: results/nxtara.com/nxtara.com.html
-```
-
-## Estructura del Proyecto
-
-```
-pentest-agent/
-├── main.py               # Entry point CLI (Typer)
-├── migrate.py            # Crea el esquema de la base de datos
-├── requirements.txt
-├── config/
-│   ├── config.yaml       # Parámetros de escaneo y del LLM (Groq)
-│   └── .env              # GROQ_API_KEY (no versionado)
-├── cli/                  # Comandos Typer: audit, report
-├── core/                 # recon, scanner, xss, sqli, settings
-├── domain/               # Modelos de dominio (Finding)
-├── application/          # audit_website() (orquestación)
-├── infra/                # Base de datos y repositorio (SQLAlchemy)
-├── gpt/                  # Cliente Groq, prompts y summarize
-├── reports/              # Generador de informe HTML
-└── results/              # Salida de auditorías (JSON + HTML)
-```
-
-## LLM y Seguridad
-
-Los hallazgos se interpretan y redactan con el modelo `openai/gpt-oss-120b` a través de
-la API de Groq (compatible con OpenAI). La API key se lee desde `config/.env` y nunca
-se sube al repositorio.
+El modelo se configura en la sección `llm` de `config/config.yaml`. `GROQ_MODEL` permite elegir un modelo desde el entorno.
 
 ## Licencia
 
-MIT © 2025 - Bastián Landskron
+MIT © 2025 Bastián Landskron

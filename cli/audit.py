@@ -1,73 +1,106 @@
+"""CLI commands for preparing plans and analyzing saved responses."""
+
 import json
-import os
+from dataclasses import asdict
+from enum import Enum
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Optional
 
 import typer
 
-from application.audit_service import audit_website
-from gpt import client
-from infra.db import SessionLocal
-from infra.repository import save_findings
-
-app = typer.Typer()
+from application.audit_service import ActiveAuditDisabled, Profile, audit_website, prepare_plan
+from core import settings, sqli, xss
+from domain.authorization import Attribution
+from domain.targets import canonical_http_target
 
 
-def validate_url(url: str):
-    """Validate the URL has a scheme and network location; exit if invalid."""
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        typer.echo("URL inválida. Debe incluir http:// o https://")
-        raise typer.Exit(1)
+app = typer.Typer(help="Planifica auditorías y analiza respuestas locales.")
+_MAX_INPUT_BYTES = 256 * 1024
+
+
+class OfflineCheck(str, Enum):
+    XSS = "xss"
+    SQLI = "sqli"
 
 
 @app.command()
 def run(
-    url: str = typer.Option(..., "--url", "-u", help="URL a auditar"),
-    token: str = typer.Option(
-        None, "--token", "-t", envvar="GROQ_API_KEY",
-        help="API key de Groq (por defecto GROQ_API_KEY del entorno)",
-    ),
+    url: str = typer.Option("", "--url", "-u", help="Destino del comando heredado. Ejecución deshabilitada."),
 ):
-    """
-    Ejecuta una auditoría web y guarda los resultados en JSON y en la base de datos.
+    """Indica el cierre del comando de auditoría activo."""
+    try:
+        audit_website(url)
+    except ActiveAuditDisabled as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(4) from None
 
-    - Valida la URL de destino
-    - Inicializa el cliente Groq (openai/gpt-oss-120b)
-    - Ejecuta la auditoría (recon, puertos, XSS, SQLi)
-    - Guarda hallazgos en results/{dominio}/{dominio}.json y en la base de datos
-    """
-    validate_url(url)
-    token = token or os.getenv("GROQ_API_KEY")
 
-    typer.echo(f"Auditando {url}...")
+@app.command()
+def plan(
+    url: str = typer.Option(..., "--url", "-u", help="Destino HTTP(S) del plan."),
+    profile: Profile = typer.Option(Profile.WEB_BASELINE, "--profile", help="Comprobación propuesta."),
+    environment: str = typer.Option("lab", "--environment", help="Entorno previsto del objetivo."),
+):
+    """Valida la estructura de un plan local sin consultar la red."""
+    try:
+        target = canonical_http_target(url, environment=environment, attribution=Attribution.UNKNOWN)
+        planned = prepare_plan(target, profile, settings.configuration().execution)
+    except (OSError, ValueError) as error:
+        typer.echo(f"Plan inválido. {error}", err=True)
+        raise typer.Exit(2) from None
+
+    typer.echo(json.dumps({
+        "profile": planned.profile.value,
+        "technique": planned.technique,
+        "target": {
+            "host": str(planned.target.host),
+            "port": planned.target.port,
+            "scheme": planned.target.scheme,
+            "path": planned.target.path,
+            "trailing_slash": planned.target.trailing_slash,
+            "method": planned.target.method,
+            "environment": planned.target.environment,
+        },
+        "scope": planned.scope.reason.value,
+        "execution": "disabled",
+        "limits": planned.limits.model_dump(),
+    }, ensure_ascii=False))
+
+
+@app.command()
+def analyze(
+    input_file: Path = typer.Option(..., "--input", "-i", exists=True, dir_okay=False, readable=True),
+    check: OfflineCheck = typer.Option(..., "--check", help="Heurística local sobre el cuerpo guardado."),
+    marker: Optional[str] = typer.Option(None, "--marker", help="Marcador de prueba original para XSS."),
+):
+    """Busca indicadores en un cuerpo HTTP guardado como texto UTF-8."""
+    if check is OfflineCheck.XSS and not marker:
+        typer.echo("El análisis XSS requiere --marker.", err=True)
+        raise typer.Exit(2)
+    if check is OfflineCheck.SQLI and marker is not None:
+        typer.echo("--marker se usa con el análisis XSS.", err=True)
+        raise typer.Exit(2)
+    try:
+        if not input_file.is_file():
+            raise ValueError("El cuerpo guardado debe ser un archivo regular.")
+        with input_file.open("rb") as source:
+            content = source.read(_MAX_INPUT_BYTES + 1)
+        if len(content) > _MAX_INPUT_BYTES:
+            raise ValueError("El cuerpo guardado supera el límite de 256 KiB.")
+        body = content.decode("utf-8")
+    except UnicodeError:
+        typer.echo("El cuerpo guardado debe estar codificado en UTF-8.", err=True)
+        raise typer.Exit(2) from None
+    except (OSError, ValueError):
+        typer.echo("No se pudo leer el cuerpo guardado o supera 256 KiB.", err=True)
+        raise typer.Exit(2) from None
 
     try:
-        client.init(token)
-        findings = audit_website(url, token)
-    except Exception as e:
-        typer.echo(f"Error durante auditoría: {e}")
-        raise typer.Exit(1)
-
-    serializable = [f.__dict__ for f in findings]
-
-    domain = urlparse(url).netloc.replace("www.", "")
-    output_dir = Path("results") / domain
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{domain}.json"
-
-    try:
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump({"url": url, "findings": serializable}, f, indent=2, ensure_ascii=False)
-        typer.echo(f"Archivo JSON generado: {output_path}")
-    except Exception as e:
-        typer.echo(f"Error al guardar JSON: {e}")
-
-    try:
-        with SessionLocal() as db:
-            save_findings(db, findings, url)
-        typer.echo("Hallazgos guardados en base de datos.")
-    except Exception as e:
-        typer.echo(f"Error al guardar en la base de datos: {e}")
-
-    typer.echo(f"Auditoría finalizada: {len(findings)} hallazgos.")
+        finding = xss.analyze(body, marker) if marker is not None else sqli.analyze(body)
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(2) from None
+    typer.echo(json.dumps({
+        "check": check.value,
+        "findings": [asdict(finding)] if finding else [],
+    }, ensure_ascii=False))

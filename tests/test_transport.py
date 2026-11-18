@@ -265,10 +265,16 @@ def test_ipv6_http_literal_keeps_brackets_in_host_header(socket_factory):
 
 def test_authorized_recon_reports_only_selected_headers(socket_factory):
     socket_factory.return_value = fake_socket(
-        b"HTTP/1.1 200 OK\r\nServer: canary\r\nSet-Cookie: password=secret\r\nContent-Length: 0\r\n\r\n"
+        b"HTTP/1.1 200 OK\r\nserver: canary\r\ncontent-security-policy: default-src 'none'\r\n"
+        b"Set-Cookie: password=secret\r\nContent-Length: 0\r\n\r\n"
     )
-    observation, _ = recon.run_authorized(TARGET, adapter.PinnedTransport(pinned_resolver()))
-    assert observation.extra == {"server": "canary", "headers": {"Server": "canary"}}
+    observation, missing = recon.run_authorized(TARGET, adapter.PinnedTransport(pinned_resolver()))
+    assert observation.extra == {
+        "server": "canary",
+        "headers": {"server": "canary", "content-security-policy": "default-src 'none'"},
+    }
+    assert "Content-Security-Policy" not in missing.extra["missing_security_headers"]
+    assert "Strict-Transport-Security" in missing.extra["missing_security_headers"]
 
 
 def test_invalid_method_or_mismatched_resolution_fails_before_connecting(socket_factory):

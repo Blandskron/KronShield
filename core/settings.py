@@ -15,7 +15,6 @@ CONFIG_PATH = Path("config") / "config.yaml"
 _MAX_CONFIG_SIZE = 64 * 1024
 Port = Annotated[int, Field(ge=1, le=65535)]
 ModelName = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_./:-]*$")]
-Payload = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
 
 
 class _SettingsLoader(yaml.SafeLoader):
@@ -49,10 +48,8 @@ class Settings(_StrictSettings):
     ports_to_scan: tuple[Port, ...] = Field(default=(80, 443, 8080, 8443), max_length=256)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     execution: BudgetLimits = Field(default_factory=BudgetLimits)
-    xss_payloads: tuple[Payload, ...] = Field(default=(), max_length=128)
-    sqli_payloads: tuple[Payload, ...] = Field(default=(), max_length=128)
 
-    @field_validator("ports_to_scan", "xss_payloads", "sqli_payloads", mode="before")
+    @field_validator("ports_to_scan", mode="before")
     @classmethod
     def freeze_yaml_sequence(cls, value):
         return tuple(value) if isinstance(value, list) else value

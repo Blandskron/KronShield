@@ -5,8 +5,6 @@ Uses the Groq Chat Completions API (OpenAI-compatible) with the
 `openai/gpt-oss-120b` model by default. Configuration comes from
 `core.settings` (config/config.yaml + environment).
 """
-import re
-
 from groq import Groq
 
 from core import settings
@@ -64,51 +62,3 @@ def chat(messages: list[dict], max_tokens: int | None = None) -> str:
         stream=False,
     )
     return (response.choices[0].message.content or "").strip()
-
-
-def _clean_payloads(text: str) -> list[str]:
-    """Turn a raw LLM reply into a clean list of one-per-line payloads."""
-    payloads = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Drop markdown code fences.
-        if line.startswith("```"):
-            continue
-        # Strip leading list markers like "1.", "1)", "- ", "* ".
-        line = re.sub(r"^\s*(\d+[\.\)]|[-*])\s*", "", line)
-        # Strip wrapping backticks.
-        line = line.strip("`").strip()
-        if line:
-            payloads.append(line)
-    return payloads
-
-
-def generate_payloads(prompt: str, max_tokens: int = 512) -> list[str]:
-    """
-    Generate a list of attack payloads for authorized security testing.
-
-    Returns a cleaned list of payload strings, one per line. On any error the
-    list is empty so callers can fall back to static payloads.
-    """
-    try:
-        content = chat(
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Eres un experto en hacking ético y pentesting autorizado. "
-                        "Generas payloads de prueba para auditorías de seguridad "
-                        "consentidas. Devuelve solo los payloads, uno por línea, "
-                        "sin explicaciones, numeración ni bloques de código."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=max_tokens,
-        )
-        return _clean_payloads(content)
-    except Exception as exc:  # noqa: BLE001 - surfaced to caller as empty list
-        print(f"[gpt.client] Error generando payloads con Groq: {exc}")
-        return []

@@ -16,7 +16,7 @@ def configuration_file(tmp_path, monkeypatch):
 def test_configuration_validates_yaml_and_keeps_defaults_for_omitted_fields(configuration_file, monkeypatch):
     configuration_file.write_text(
         "timeouts:\n  request: 2.5\nports_to_scan: [443, 8443]\nexecution:\n  burst: 3\n"
-        "llm:\n  temperature: 0.5\nxss_payloads: ['marker']\n",
+        "llm:\n  temperature: 0.5\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-20b")
@@ -31,8 +31,8 @@ def test_configuration_validates_yaml_and_keeps_defaults_for_omitted_fields(conf
     assert settings.llm()["temperature"] == 0.5
     assert config.llm.model == "openai/gpt-oss-120b"
     legacy = settings.load()
-    legacy["xss_payloads"].append("changed")
-    assert settings.load()["xss_payloads"] == ["marker"]
+    legacy["ports_to_scan"].append(80)
+    assert settings.load()["ports_to_scan"] == [443, 8443]
 
 
 @pytest.mark.parametrize("yaml_settings", [
