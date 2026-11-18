@@ -1,36 +1,40 @@
-import json
-import os
+"""Build a local HTML report from previously captured audit data."""
+
 from pathlib import Path
-from urllib.parse import urlparse
 
 import typer
 
-from gpt import summarize, client
-from reports.report_html import generate_html_report
+from application.report_input import read_saved_audit
+from gpt import client, summarize
+from reports.report_html import generate_audit_html_report
 
-app = typer.Typer(help="Genera reportes visuales desde auditorías guardadas")
+
+app = typer.Typer(help="Genera reportes visuales desde auditorías guardadas.")
 
 
 @app.command("generate")
 def generate(
-    input: str = typer.Option(..., "--input", "-i", help="Archivo JSON con resultados de auditoría"),
-    token: str = typer.Option(
-        None, "--token", "-t", envvar="GROQ_API_KEY",
-        help="API key de Groq (por defecto GROQ_API_KEY del entorno)",
-    ),
+    input_file: Path = typer.Option(..., "--input", "-i", exists=True, dir_okay=False, readable=True),
+    with_ai: bool = typer.Option(False, "--with-ai", help="Envía el tipo y detalle de los hallazgos a Groq."),
 ):
-    path = Path(input)
-    if not path.exists():
-        typer.echo(f"El archivo '{input}' no existe.")
-        raise typer.Exit(1)
+    try:
+        audit = read_saved_audit(input_file)
+    except (OSError, ValueError):
+        typer.echo("Entrada inválida. Se espera un JSON de auditoría válido de hasta 1 MiB.", err=True)
+        raise typer.Exit(2) from None
 
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    summary = None
+    if with_ai:
+        try:
+            client.init()
+            summary = summarize.generate_summary(audit.summary_input())
+        except Exception:
+            typer.echo("No se pudo obtener el resumen de Groq. Revisa la configuración del proveedor.", err=True)
+            raise typer.Exit(5) from None
 
-    client.init(token or os.getenv("GROQ_API_KEY"))
-    typer.echo("Consultando a Groq (openai/gpt-oss-120b) para redactar el informe...")
-    content = summarize.generate_summary(data)
-
-    domain = urlparse(data["url"]).netloc.replace("www.", "")
-    output = generate_html_report(content, domain)
+    try:
+        output = generate_audit_html_report(audit, summary)
+    except (OSError, ValueError, RuntimeError):
+        typer.echo("No se pudo publicar el informe en el directorio results.", err=True)
+        raise typer.Exit(5) from None
     typer.echo(f"Reporte HTML generado en: {output}")

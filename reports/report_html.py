@@ -1,11 +1,13 @@
 import re
-from pathlib import Path
-from datetime import datetime, timezone
+from html import escape
+
+from application.report_input import SavedAudit
+from infra.artifacts import publish_report
 
 
 def _inline(text: str) -> str:
-    """Render inline Markdown (bold/italic/code) to HTML, escaping angle brackets."""
-    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """Render the supported inline Markdown on escaped text."""
+    text = escape(text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
     text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
     return text
@@ -37,43 +39,45 @@ def _render_body(body: str) -> str:
     return "\n".join(html_parts)
 
 
-def generate_html_report(content: str, domain: str) -> str:
-    """Convert a Markdown audit report into a styled HTML file under results/{domain}."""
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
+def _render_markdown(content: str) -> str:
     # Parse line by line so that headings are detected only at the start of a
     # line (avoids "### " being mistaken for a "## " section).
-    body_html = ""
+    blocks = []
     buffer: list[str] = []
 
     def flush_buffer():
-        nonlocal body_html
         text = "\n".join(buffer).strip()
         if text:
-            body_html += _render_body(text) + "\n"
+            blocks.append(_render_body(text))
         buffer.clear()
 
     for line in content.strip().splitlines():
         stripped = line.strip()
         if stripped.startswith("### "):
             flush_buffer()
-            body_html += f"<h3>{_inline(stripped[4:].strip())}</h3>\n"
+            blocks.append(f"<h3>{_inline(stripped[4:].strip())}</h3>")
         elif stripped.startswith("## "):
             flush_buffer()
-            body_html += f"<h2>{_inline(stripped[3:].strip())}</h2>\n"
+            blocks.append(f"<h2>{_inline(stripped[3:].strip())}</h2>")
         elif stripped.startswith("# "):
             flush_buffer()
-            body_html += f"<h2>{_inline(stripped[2:].strip())}</h2>\n"
+            blocks.append(f"<h2>{_inline(stripped[2:].strip())}</h2>")
         else:
             buffer.append(line)
     flush_buffer()
+    return "\n".join(blocks)
 
-    html = f"""<!DOCTYPE html>
+
+def _document(target: str, body_html: str) -> str:
+    label = escape(target)
+    return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Informe de Auditoría - {domain}</title>
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+    <title>Informe de Auditoría - {label}</title>
     <style>
         body {{ font-family: Arial, Helvetica, sans-serif; margin: 2em; background: #fefefe; color: #333; }}
         h1 {{ text-align: center; color: #004080; }}
@@ -82,22 +86,39 @@ def generate_html_report(content: str, domain: str) -> str:
         p {{ line-height: 1.6; }}
         ul {{ line-height: 1.6; }}
         code {{ background: #f2f2f2; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }}
-        .timestamp {{ font-size: 0.9em; color: #888; text-align: center; margin-bottom: 2em; }}
+        .target {{ text-align: center; overflow-wrap: anywhere; }}
+        p, code {{ overflow-wrap: anywhere; }}
         .container {{ max-width: 820px; margin: auto; }}
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Informe Técnico de Auditoría</h1>
-        <div class="timestamp">Objetivo: {domain} &middot; Generado el {now}</div>
+        <p class="target">Objetivo: {label}</p>
 {body_html}
     </div>
 </body>
 </html>"""
 
-    output_dir = Path("results") / domain
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{domain}.html"
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html)
-    return str(output_path)
+
+def generate_html_report(content: str, domain: str) -> str:
+    """Publish the supported Markdown with the supplied label displayed as text."""
+    return str(publish_report(_document(domain, _render_markdown(content)), "html"))
+
+
+def generate_audit_html_report(audit: SavedAudit, summary: str | None = None) -> str:
+    """Publish a deterministic report of the saved observations."""
+    blocks = ["<h2>Hallazgos registrados</h2>", f"<p>Total de registros: {len(audit.findings)}</p>"]
+    for index, finding in enumerate(audit.findings, 1):
+        blocks.append(f"<h3>{index}. {escape(finding.type)}</h3>")
+        blocks.append(f"<p>{escape(finding.detail)}</p>")
+        if finding.url:
+            blocks.append(f"<p>Ubicación: {escape(finding.url)}</p>")
+        if finding.payload:
+            blocks.append(f"<p>Valor de prueba: <code>{escape(finding.payload)}</code></p>")
+        if finding.extra and finding.extra.missing_security_headers:
+            headers = ", ".join(finding.extra.missing_security_headers)
+            blocks.append(f"<p>Cabeceras ausentes: {escape(headers)}</p>")
+    if summary:
+        blocks.extend(("<h2>Resumen asistido por IA</h2>", _render_markdown(summary)))
+    return str(publish_report(_document(audit.url, "\n".join(blocks)), "html"))
