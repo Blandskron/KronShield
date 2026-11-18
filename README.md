@@ -21,13 +21,14 @@ En PowerShell, activa el entorno con `.\.venv\Scripts\Activate.ps1` antes de ins
 ```bash
 python main.py audit plan --url https://scope.example/api/ --environment lab
 python main.py audit plan --url https://scope.example:8443 --profile tcp-baseline
-python main.py audit analyze --input respuesta.txt --check xss --marker test-marker
-python main.py audit analyze --input respuesta.txt --check sqli
+python main.py audit analyze --input respuesta.txt --baseline base.txt --check xss --marker test-marker --content-type text/html
+python main.py audit analyze --input respuesta.txt --baseline base.txt --check sqli
+python main.py audit analyze --response-missing --check sqli
 ```
 
 `audit plan` valida la estructura del destino y muestra el perfil, el presupuesto configurado y el estado de ejecución. El plan local indica `missing_authorization` y `disabled`. La CLI actual solo genera una vista previa, sin consultar DNS ni servicios. El laboratorio integrado se habilitará en v0.5.0.
 
-`audit analyze` recibe un cuerpo HTTP guardado en UTF-8 de hasta 256 KiB. Reporta indicadores que requieren corroboración. Los comandos de planificación y análisis funcionan sin una clave Groq.
+`audit analyze` recibe capturas UTF-8 de hasta 256 KiB cada una. Usa una respuesta base comparable del mismo endpoint. Un reflejo escapado o una firma de base de datos que ya aparece en esa respuesta se registra como observación de confianza baja. Una señal nueva en el contexto adecuado puede quedar como sospecha de confianza media. Si falta la respuesta de prueba, `--response-missing` registra un resultado inconcluso. El análisis de XSS usa el tipo de contenido capturado y conserva el contexto estático del HTML. La confirmación se reserva para una validación posterior. Los comandos de planificación y análisis funcionan sin una clave Groq.
 
 Si conservas un `config/config.yaml` anterior, elimina `xss_payloads` y `sqli_payloads`. Los parámetros de límites se configuran en `execution`. El comando heredado `audit run` informa que la ejecución activa está cerrada.
 

@@ -23,6 +23,16 @@ class OfflineCheck(str, Enum):
     SQLI = "sqli"
 
 
+def _read_capture(path: Path) -> str:
+    if not path.is_file():
+        raise ValueError("La captura debe ser un archivo regular.")
+    with path.open("rb") as source:
+        content = source.read(_MAX_INPUT_BYTES + 1)
+    if len(content) > _MAX_INPUT_BYTES:
+        raise ValueError("La captura supera el límite de 256 KiB.")
+    return content.decode("utf-8")
+
+
 @app.command()
 def run(
     url: str = typer.Option("", "--url", "-u", help="Destino del comando heredado. Ejecución deshabilitada."),
@@ -69,25 +79,26 @@ def plan(
 
 @app.command()
 def analyze(
-    input_file: Path = typer.Option(..., "--input", "-i", exists=True, dir_okay=False, readable=True),
+    input_file: Optional[Path] = typer.Option(None, "--input", "-i", exists=True, dir_okay=False, readable=True),
     check: OfflineCheck = typer.Option(..., "--check", help="Heurística local sobre el cuerpo guardado."),
     marker: Optional[str] = typer.Option(None, "--marker", help="Marcador de prueba original para XSS."),
+    baseline: Optional[Path] = typer.Option(None, "--baseline", exists=True, dir_okay=False, readable=True),
+    content_type: Optional[str] = typer.Option(None, "--content-type", help="Tipo de contenido capturado para XSS."),
+    response_missing: bool = typer.Option(False, "--response-missing", help="Registra una respuesta de prueba perdida."),
 ):
     """Busca indicadores en un cuerpo HTTP guardado como texto UTF-8."""
     if check is OfflineCheck.XSS and not marker:
         typer.echo("El análisis XSS requiere --marker.", err=True)
         raise typer.Exit(2)
-    if check is OfflineCheck.SQLI and marker is not None:
-        typer.echo("--marker se usa con el análisis XSS.", err=True)
+    if check is OfflineCheck.SQLI and (marker is not None or content_type is not None):
+        typer.echo("--marker y --content-type se usan con el análisis XSS.", err=True)
+        raise typer.Exit(2)
+    if response_missing == (input_file is not None):
+        typer.echo("Usa --input para una captura o --response-missing si se perdió la respuesta.", err=True)
         raise typer.Exit(2)
     try:
-        if not input_file.is_file():
-            raise ValueError("El cuerpo guardado debe ser un archivo regular.")
-        with input_file.open("rb") as source:
-            content = source.read(_MAX_INPUT_BYTES + 1)
-        if len(content) > _MAX_INPUT_BYTES:
-            raise ValueError("El cuerpo guardado supera el límite de 256 KiB.")
-        body = content.decode("utf-8")
+        body = _read_capture(input_file) if input_file is not None else None
+        reference = _read_capture(baseline) if baseline is not None else None
     except UnicodeError:
         typer.echo("El cuerpo guardado debe estar codificado en UTF-8.", err=True)
         raise typer.Exit(2) from None
@@ -96,7 +107,10 @@ def analyze(
         raise typer.Exit(2) from None
 
     try:
-        finding = xss.analyze(body, marker) if marker is not None else sqli.analyze(body)
+        if marker is not None:
+            finding = xss.analyze(body, marker, baseline=reference, content_type=content_type)
+        else:
+            finding = sqli.analyze(body, baseline=reference)
     except ValueError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(2) from None

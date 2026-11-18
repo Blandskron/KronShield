@@ -2,7 +2,16 @@ import re
 from html import escape
 
 from application.report_input import SavedAudit
+from domain.models import FindingConfidence, FindingStatus
 from infra.artifacts import publish_report
+
+
+_STATUS_LABELS = {
+    FindingStatus.OBSERVED: "Observación",
+    FindingStatus.SUSPECTED: "Sospecha",
+    FindingStatus.INCONCLUSIVE: "Inconcluso",
+}
+_CONFIDENCE_LABELS = {FindingConfidence.LOW: "Baja", FindingConfidence.MEDIUM: "Media"}
 
 
 def _inline(text: str) -> str:
@@ -111,6 +120,10 @@ def generate_audit_html_report(audit: SavedAudit, summary: str | None = None) ->
     blocks = ["<h2>Hallazgos registrados</h2>", f"<p>Total de registros: {len(audit.findings)}</p>"]
     for index, finding in enumerate(audit.findings, 1):
         blocks.append(f"<h3>{index}. {escape(finding.type)}</h3>")
+        if finding.status is not None:
+            blocks.append(f"<p>Estado: {_STATUS_LABELS[finding.status]}</p>")
+        if finding.confidence is not None:
+            blocks.append(f"<p>Confianza: {_CONFIDENCE_LABELS[finding.confidence]}</p>")
         blocks.append(f"<p>{escape(finding.detail)}</p>")
         if finding.url:
             blocks.append(f"<p>Ubicación: {escape(finding.url)}</p>")
@@ -119,6 +132,9 @@ def generate_audit_html_report(audit: SavedAudit, summary: str | None = None) ->
         if finding.extra and finding.extra.missing_security_headers:
             headers = ", ".join(finding.extra.missing_security_headers)
             blocks.append(f"<p>Cabeceras ausentes: {escape(headers)}</p>")
+        if finding.extra and finding.extra.signatures:
+            signatures = ", ".join(finding.extra.signatures)
+            blocks.append(f"<p>Firmas de error: {escape(signatures)}</p>")
     if summary:
         blocks.extend(("<h2>Resumen asistido por IA</h2>", _render_markdown(summary)))
     return str(publish_report(_document(audit.url, "\n".join(blocks)), "html"))

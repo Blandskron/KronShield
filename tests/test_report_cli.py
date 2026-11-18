@@ -45,6 +45,25 @@ def test_generate_renders_legacy_json_locally_by_default(report_cli, monkeypatch
     init.assert_not_called()
 
 
+def test_generate_keeps_the_offline_evidence_classification(report_cli):
+    audit = {
+        "url": "https://scope.example/",
+        "findings": [{
+            "type": "sqli", "detail": "Firma presente en la respuesta base",
+            "status": "observed", "confidence": "low",
+            "extra": {"signatures": ["postgres-syntax"]},
+        }],
+    }
+    Path("capture.json").write_text(json.dumps(audit), encoding="utf8")
+    result = report_cli("-i", "capture.json")
+    assert result.exit_code == 0, result.output
+    output, = Path("results").glob("*.html")
+    html = output.read_text(encoding="utf8")
+    assert "Estado: Observación" in html
+    assert "Confianza: Baja" in html
+    assert "Firmas de error: postgres-syntax" in html
+
+
 @pytest.mark.parametrize("payload", [
     b"{",
     b'{"url":"https://scope.example","findings":{}}',

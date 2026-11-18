@@ -5,6 +5,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from domain.models import FindingConfidence, FindingStatus
+
 
 _MAX_JSON_BYTES = 1024 * 1024
 _TEXT = Annotated[str, StringConstraints(max_length=16384)]
@@ -18,6 +20,7 @@ class _ReportInput(BaseModel):
 
 class FindingExtras(_ReportInput):
     missing_security_headers: tuple[_HEADER, ...] = Field(default=(), max_length=64)
+    signatures: tuple[_HEADER, ...] = Field(default=(), max_length=64)
 
 
 class ReportFinding(_ReportInput):
@@ -26,6 +29,8 @@ class ReportFinding(_ReportInput):
     url: _LOCATION | None = None
     payload: _TEXT | None = None
     extra: FindingExtras | None = None
+    status: FindingStatus | None = None
+    confidence: FindingConfidence | None = None
 
 
 class SavedAudit(_ReportInput):

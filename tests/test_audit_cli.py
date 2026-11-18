@@ -63,7 +63,7 @@ def test_tcp_preview_requires_a_port_target_without_application_path(invoke):
     [
         ("xss", "echo test-marker", ["--marker", "test-marker"], True),
         ("xss", "clean body", ["--marker", "test-marker"], False),
-        ("sqli", "SQLite error", [], True),
+        ("sqli", 'sqlite3.OperationalError: near "example": syntax error', [], True),
         ("sqli", "clean body", [], False),
     ],
 )
@@ -78,7 +78,8 @@ def test_cli_analyzes_saved_http_body_offline(invoke, tmp_path, check, body, opt
     if expected:
         finding, = data["findings"]
         assert finding["type"] == check
-        assert finding["detail"].startswith("Posible")
+        assert finding["status"] == "observed"
+        assert finding["confidence"] == "low"
         assert finding["payload"] is None
     else:
         assert data["findings"] == []
@@ -100,3 +101,32 @@ def test_cli_rejects_invalid_xss_marker(invoke, tmp_path, options):
     artifact.write_text("fixture", encoding="utf8")
     result = invoke("analyze", "-i", str(artifact), "--check", "xss", *options)
     assert result.exit_code == 2
+
+
+def test_offline_cli_compares_baseline_and_preserves_classification(invoke, tmp_path):
+    body, baseline = tmp_path / "probe.txt", tmp_path / "baseline.txt"
+    body.write_text("ERROR: syntax error at or near test", encoding="utf8")
+    baseline.write_text("Clean response", encoding="utf8")
+
+    result = invoke("analyze", "-i", str(body), "--check", "sqli", "--baseline", str(baseline))
+
+    assert result.exit_code == 0, result.output
+    finding, = json.loads(result.stdout)["findings"]
+    assert finding["status"] == "suspected"
+    assert finding["confidence"] == "medium"
+
+
+def test_offline_cli_marks_lost_response_as_inconclusive(invoke):
+    result = invoke("analyze", "--check", "sqli", "--response-missing")
+    assert result.exit_code == 0, result.output
+    finding, = json.loads(result.stdout)["findings"]
+    assert finding["status"] == "inconclusive"
+    assert finding["type"] == "error"
+    assert finding["confidence"] is None
+
+
+def test_offline_cli_requires_exactly_one_capture_or_missing_response_flag(invoke, tmp_path):
+    capture = tmp_path / "probe.txt"
+    capture.write_text("", encoding="utf8")
+    assert invoke("analyze", "--check", "sqli").exit_code == 2
+    assert invoke("analyze", "--check", "sqli", "-i", str(capture), "--response-missing").exit_code == 2
