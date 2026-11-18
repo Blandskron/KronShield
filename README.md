@@ -32,6 +32,12 @@ python main.py audit analyze --response-missing --check sqli
 
 Si conservas un `config/config.yaml` anterior, elimina `xss_payloads` y `sqli_payloads`. Los parámetros de límites se configuran en `execution`. El comando heredado `audit run` informa que la ejecución activa está cerrada.
 
+## Resultados guardados
+
+`python main.py audit save --input captura.json` valida un JSON de auditoría, publica una copia con un ID propio en `results` y confirma sus hallazgos en SQLite. `--database ruta/base.db` selecciona la base local. La URL del objetivo y la URL observada de cada hallazgo se guardan por separado.
+
+Si SQLite falla, el comando devuelve código 5 e indica la copia JSON conservada con estado `json_only`. Reintenta usando ese archivo como entrada para conservar el ID y evitar duplicados en la base. Una nueva entrada sin ID genera un resultado independiente. El comando admite bases heredadas mediante tablas adicionales.
+
 ## Informes guardados
 
 `report generate` procesa el JSON de auditorías anteriores y crea un HTML local sin credenciales. Admite hasta 1 MiB de entrada y 1.000 hallazgos. Cada ejecución publica un archivo `results/report-<id>.html` con nombre propio. El directorio `results` debe ser local al directorio de trabajo y estar en un sistema de archivos que admita enlaces duros.

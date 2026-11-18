@@ -9,9 +9,12 @@ from typing import Optional
 import typer
 
 from application.audit_service import ActiveAuditDisabled, Profile, audit_website, prepare_plan
+from application.report_input import read_saved_audit
+from application.save_result import ResultPersistenceFailure, save_result
 from core import settings, sqli, xss
 from domain.authorization import Attribution
 from domain.targets import canonical_http_target
+from infra.offline_results import persist_offline_result
 
 
 app = typer.Typer(help="Planifica auditorías y analiza respuestas locales.")
@@ -21,6 +24,33 @@ _MAX_INPUT_BYTES = 256 * 1024
 class OfflineCheck(str, Enum):
     XSS = "xss"
     SQLI = "sqli"
+
+
+@app.command()
+def save(
+    input_file: Path = typer.Option(..., "--input", "-i", exists=True, dir_okay=False, readable=True),
+    database: Path = typer.Option(Path("pentest.db"), "--database", dir_okay=False),
+):
+    """Conserva una captura JSON de auditoría en un archivo nuevo y en SQLite."""
+    try:
+        audit = read_saved_audit(input_file)
+    except (OSError, ValueError):
+        typer.echo("Entrada inválida. Se espera un JSON de auditoría válido de hasta 1 MiB.", err=True)
+        raise typer.Exit(2) from None
+    try:
+        result_id, output = save_result(
+            audit, lambda snapshot, digest: persist_offline_result(database, snapshot, digest),
+        )
+    except ResultPersistenceFailure as error:
+        typer.echo(json.dumps({
+            "result_id": error.result_id, "snapshot": error.snapshot_path, "persistence": "json_only",
+        }))
+        typer.echo("Falló la escritura en SQLite. Conserva el JSON generado y úsalo con audit save para reintentar.", err=True)
+        raise typer.Exit(5) from None
+    except (OSError, ValueError):
+        typer.echo("No se pudo publicar el resultado JSON.", err=True)
+        raise typer.Exit(5) from None
+    typer.echo(json.dumps({"result_id": result_id, "snapshot": output, "persistence": "complete"}))
 
 
 def _read_capture(path: Path) -> str:

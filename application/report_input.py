@@ -2,6 +2,7 @@
 
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -19,6 +20,8 @@ class _ReportInput(BaseModel):
 
 
 class FindingExtras(_ReportInput):
+    model_config = ConfigDict(strict=True, extra="allow", frozen=True, hide_input_in_errors=True)
+
     missing_security_headers: tuple[_HEADER, ...] = Field(default=(), max_length=64)
     signatures: tuple[_HEADER, ...] = Field(default=(), max_length=64)
 
@@ -34,6 +37,7 @@ class ReportFinding(_ReportInput):
 
 
 class SavedAudit(_ReportInput):
+    result_id: UUID | None = None
     url: Annotated[str, StringConstraints(min_length=1, max_length=8192)]
     findings: tuple[ReportFinding, ...] = Field(max_length=1000)
 
