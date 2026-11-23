@@ -223,3 +223,8 @@ screenshots/
 *.har
 .env.*
 !.env.example
+
+# Frontend dependencies and browser test output
+node_modules/
+playwright-report/
+test-results/

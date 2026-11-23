@@ -62,13 +62,28 @@ class Settings(_StrictSettings):
         return ports
 
 
+def configuration_path() -> Path:
+    """Resolve explicit, legacy workspace, or user-level configuration."""
+    explicit = os.getenv("PENTEST_AGENT_CONFIG")
+    if explicit:
+        return Path(explicit).expanduser()
+    if CONFIG_PATH.exists() or CONFIG_PATH.with_name(".env").exists():
+        return CONFIG_PATH
+    user_config = os.getenv("APPDATA") if os.name == "nt" else os.getenv("XDG_CONFIG_HOME")
+    config_root = Path(user_config) if user_config else Path.home() / ".config"
+    return config_root / "pentest-agent" / "config.yaml"
+
+
 @lru_cache(maxsize=1)
 def configuration() -> Settings:
     """Read a bounded YAML document and apply defaults to omitted fields."""
-    if not CONFIG_PATH.exists():
+    path = configuration_path()
+    if not path.exists():
+        if os.getenv("PENTEST_AGENT_CONFIG"):
+            raise ValueError("PENTEST_AGENT_CONFIG points to a missing file")
         return Settings()
     try:
-        with CONFIG_PATH.open(encoding="utf-8") as file:
+        with path.open(encoding="utf-8") as file:
             document = file.read(_MAX_CONFIG_SIZE + 1)
         if len(document) > _MAX_CONFIG_SIZE:
             raise ValueError("YAML configuration exceeds its size limit")

@@ -13,6 +13,7 @@ def pytest_configure(config):
     config.add_cleanup(patch.undo)
     patch.setenv("GROQ_API_KEY", "")
     patch.delenv("GROQ_MODEL", raising=False)
+    patch.delenv("PENTEST_AGENT_CONFIG", raising=False)
 
     for name in (
         "create_connection", "getaddrinfo", "gethostbyaddr", "gethostbyname",

@@ -25,6 +25,8 @@ PostgreSQL, SQLAlchemy 2 y Alembic. UUID opacos en recursos, timestamps UTC, cla
 | Approval | Revisión y hash de plan + tipo, actor, decisión, motivo, vigencia y revocación. Autorizaciones tienen aprobaciones de su revisión. |
 | Outbox / JobEvent / Idempotency | Outbox por transición, evento por `(org_id,job_id,seq)`, clave idempotente por actor y operación con hash de cuerpo. |
 
+La migración `0004_scope_review` implementa evaluaciones y planes de revisión de alcance. La instantánea y su hash se guardan con las referencias de autorización y activos, el evento de creación y su entrada en outbox. El rol de ejecución de la API tiene acceso de solo inserción o lectura a estas tablas según el recurso, con claves compuestas y políticas de organización y proyecto.
+
 ## Invariantes
 
 - Tablas de proyecto referencian `(org_id, project_id, id)` en recursos de alcance de proyecto cuando corresponda. Para recursos de org utilizar `(org_id,id)`. Evitar FK simple que permita referencias cruzadas. Restrict de borrado en custodia y aprobaciones. Relaciones de membresía y permisos se evalúan en cada operación.
@@ -37,3 +39,19 @@ PostgreSQL, SQLAlchemy 2 y Alembic. UUID opacos en recursos, timestamps UTC, cla
 1. Alembic inicial crea org, usuarios/roles, proyectos, autorizaciones, targets y RLS. Segunda revisión añade ejecución, outbox, evidencia y eventos. Cambios expand/contract y backfills reiniciables por rango. Usuario de migraciones distinto de API/worker.
 2. Importador CLI offline, con `--dry-run` y org/proyecto obligatorios. Lee SQLite en modo solo lectura o JSON validado con límites. Reporta errores por registro y deduplica por digest de origen más ID/fila. No activa jobs. Marca `origin=legacy` y confianza no verificada. Sin inventar fecha, autorización ni URL específica ausentes. Conservar procedencia y preservar original bajo política de retención.
 3. v1.0.0 exige restauración de backups PostgreSQL, evidencia y anclajes en un entorno aislado. Migraciones se ensayan con upgrade e intervención revertible. Hacer rollback de despliegue con versión compatible de esquema y respaldo previo.
+
+
+## Ejecutar la migración inicial
+
+Desde el repositorio, instala las dependencias de PostgreSQL con `uv sync --locked --extra postgres`. En una base PostgreSQL dedicada, prepara un usuario de migraciones con permisos para crear el esquema y la tabla de versiones de Alembic en `public`. Como administrador de la base, crea el rol de grupo y otórgalo a un login de ejecución independiente.
+
+```sql
+CREATE ROLE pentest_agent_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT pentest_agent_runtime TO pentest_app;
+```
+
+El login `pentest_app` debe existir, carecer de privilegios administrativos y de otros roles con acceso al esquema, y no ser propietario de sus tablas. Define `PENTEST_AGENT_MIGRATION_URL` con el DSN `postgresql+psycopg://` del usuario de migraciones y ejecuta `uv run --no-sync alembic upgrade head`.
+
+La migración crea el esquema `pentest_agent`. El login de ejecución usa `tenant_transaction` para establecer organización, identidad y proyecto durante la transacción. Es responsabilidad del backend derivar esos datos de una sesión autenticada antes de abrir la transacción. La migración inicial concede escritura sobre objetivos dentro del proyecto visible. La gestión de identidades, membresías y revisiones de autorización requiere los servicios de las tareas siguientes. [Políticas de filas en PostgreSQL](https://www.postgresql.org/docs/17/ddl-rowsecurity.html)
+
+Para ejecutar la integración, define `PENTEST_AGENT_TEST_POSTGRES_ADMIN_URL` con credenciales de administrador para una instancia desechable y vacía. La prueba crea roles y datos de prueba, aplica la migración, revierte a `base` y vuelve a aplicar `head`. Ejecuta `uv run --no-sync python -m pytest integration`.

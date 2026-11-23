@@ -77,7 +77,8 @@ def _render_markdown(content: str) -> str:
     return "\n".join(blocks)
 
 
-def _document(target: str, body_html: str) -> str:
+def _document(target: str, body_html: str, *, heading: str = "Informe Técnico de Auditoría",
+              subject_label: str = "Objetivo", title: str = "Informe de Auditoría") -> str:
     label = escape(target)
     return f"""<!DOCTYPE html>
 <html lang="es">
@@ -86,7 +87,7 @@ def _document(target: str, body_html: str) -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
-    <title>Informe de Auditoría - {label}</title>
+    <title>{escape(title)} - {label}</title>
     <style>
         body {{ font-family: Arial, Helvetica, sans-serif; margin: 2em; background: #fefefe; color: #333; }}
         h1 {{ text-align: center; color: #004080; }}
@@ -96,14 +97,18 @@ def _document(target: str, body_html: str) -> str:
         ul {{ line-height: 1.6; }}
         code {{ background: #f2f2f2; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; }}
         .target {{ text-align: center; overflow-wrap: anywhere; }}
-        p, code {{ overflow-wrap: anywhere; }}
+        p, code, dd, td {{ overflow-wrap: anywhere; }}
+        dt {{ font-weight: bold; margin-top: .65em; }}
+        dd {{ margin-left: 0; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ text-align: left; border-bottom: 1px solid #ddd; padding: .4em; }}
         .container {{ max-width: 820px; margin: auto; }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Informe Técnico de Auditoría</h1>
-        <p class="target">Objetivo: {label}</p>
+        <h1>{escape(heading)}</h1>
+        <p class="target">{escape(subject_label)}: {label}</p>
 {body_html}
     </div>
 </body>
@@ -138,3 +143,41 @@ def generate_audit_html_report(audit: SavedAudit, summary: str | None = None) ->
     if summary:
         blocks.extend(("<h2>Resumen asistido por IA</h2>", _render_markdown(summary)))
     return str(publish_report(_document(audit.url, "\n".join(blocks)), "html"))
+
+
+def render_scope_review_report(plan: dict, assessment_label: str) -> str:
+    """Render a deterministic HTML report from the saved review snapshot."""
+    authorization = plan["authorization"]
+
+    def fields(pairs):
+        return "\n".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in pairs)
+
+    metadata = (
+        ("Evaluación", assessment_label), ("Organización", plan["org_id"]), ("Proyecto", plan["project_id"]),
+        ("Revisión registrada", plan["checked_at"]), ("Estado", plan["status"]), ("SHA-256 del plan", plan["hash"]),
+    )
+    mandate = (
+        ("Autorización", authorization["id"]), ("Revisión", authorization["revision"]),
+        ("Estado al revisar", authorization["status"]), ("Vigente desde", authorization["valid_from"]),
+        ("Vigente hasta", authorization["valid_until"]), ("SHA-256 del mandato", authorization["document_digest"]),
+    )
+    denials = "".join(f"<li>{escape(reason)}</li>" for reason in plan["denials"])
+    denial_list = f"<ul>{denials}</ul>" if denials else "<p>Sin motivos registrados.</p>"
+    rows = "".join(
+        "<tr>" + "".join(f"<td>{escape(str(field))}</td>" for field in (
+            item["canonical_address"], item["environment"], item["version"], item["reason"], item["rule_id"] or "—",
+        )) + "</tr>"
+        for item in plan["targets"]
+    )
+    body = (
+        "<p>Simulación de alcance. Ejecución deshabilitada.</p>"
+        f"<h2>Registro de la revisión</h2><dl>{fields(metadata)}</dl>"
+        f"<h2>Autorización revisada</h2><dl>{fields(mandate)}</dl>"
+        f"<h2>Motivos de bloqueo</h2>{denial_list}"
+        "<h2>Activos revisados</h2><table><thead><tr>"
+        "<th scope='col'>Dirección</th><th scope='col'>Entorno</th><th scope='col'>Versión</th>"
+        "<th scope='col'>Resultado</th><th scope='col'>Regla</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>"
+    )
+    return _document(str(plan["id"]), body, heading="Informe de revisión de alcance",
+                     subject_label="Plan", title="Revisión de alcance")

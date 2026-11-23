@@ -68,3 +68,28 @@ def test_invalid_model_override_is_validated_without_echoing_its_value(configura
     with pytest.raises(ValueError) as error:
         settings.llm()
     assert "secret text" not in str(error.value)
+
+
+def test_configuration_resolves_user_file_and_explicit_override(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PENTEST_AGENT_CONFIG", raising=False)
+    for variable in ("APPDATA", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(variable, str(tmp_path / "user"))
+
+    user_settings = tmp_path / "user" / "pentest-agent" / "config.yaml"
+    assert settings.configuration_path() == user_settings
+
+    workspace_settings = tmp_path / "config" / "config.yaml"
+    workspace_settings.parent.mkdir()
+    workspace_settings.touch()
+    assert settings.configuration_path().resolve() == workspace_settings
+
+    explicit = tmp_path / "explicit.yaml"
+    monkeypatch.setenv("PENTEST_AGENT_CONFIG", str(explicit))
+    assert settings.configuration_path() == explicit
+
+
+def test_missing_explicit_configuration_fails_closed(configuration_file, monkeypatch):
+    monkeypatch.setenv("PENTEST_AGENT_CONFIG", str(configuration_file))
+    with pytest.raises(ValueError, match="PENTEST_AGENT_CONFIG points to a missing file"):
+        settings.configuration()

@@ -2,19 +2,48 @@
 
 CLI para preparar auditorías autorizadas y analizar respuestas HTTP guardadas. La ejecución activa está deshabilitada en esta etapa. El laboratorio integrado, el frontend y Docker Compose se detallan en el [plan de implementación](docs/planning/README.md).
 
+## Piloto en Docker Compose
+
+```bash
+docker compose up --build -d --wait
+docker compose exec -T api cat /run/pilot/bootstrap
+```
+
+Abre [http://localhost:8080](http://localhost:8080/) y selecciona **Primer acceso**. Usa el código de un solo uso para crear el administrador de plataforma. En **Gestión**, crea las cuentas locales y asigna una cuenta distinta como administradora de cada organización. Con esa cuenta, registra un cliente y un proyecto. Asigna por separado los roles de operador y aprobador mediante las membresías de organización y proyecto.
+
+El operador registra el activo, la evaluación y el mandato. El aprobador revisa la autorización. El planificador muestra el resultado de la simulación y sus motivos. Solo el gateway tiene puerto de host. PostgreSQL, Redis y el almacén de objetos tienen volúmenes persistentes. Los documentos de autorización se cifran y guardan en PostgreSQL. Conserva también el volumen de secretos al respaldar o recuperar la base. `docker compose down` conserva esos volúmenes. [Servicios de Docker Compose](https://docs.docker.com/reference/compose-file/services/)
+
+```bash
+docker compose run --rm cli status
+docker compose run --rm cli auth login --username operador
+docker compose run --rm cli project organizations
+docker compose run --rm cli project list --org-id UUID_ORG
+docker compose run --rm cli lab seed --org-id UUID_ORG --project-id UUID_PROYECTO
+docker compose run --rm cli target list --org-id UUID_ORG --project-id UUID_PROYECTO
+docker compose run --rm cli assessment list --org-id UUID_ORG --project-id UUID_PROYECTO
+docker compose run --rm cli authorization list --org-id UUID_ORG --project-id UUID_PROYECTO
+docker compose run --rm cli plan create --org-id UUID_ORG --project-id UUID_PROYECTO --assessment-id UUID_EVALUACION --authorization-id UUID_AUTORIZACION --revision 1 --target-id UUID_ACTIVO
+docker compose run --rm cli auth logout
+```
+
+`plan create` y `plan show` devuelven JSON con `browser_url` para abrir el plan con una sesión web del mismo proyecto. Cada plan guardado ofrece un informe HTML descargable desde la web. También puedes exportarlo desde la CLI con `docker compose run --rm -T cli plan report --org-id UUID_ORG --project-id UUID_PROYECTO --plan-id UUID_PLAN > revision.html`. El informe conserva el hash y el resultado de la simulación registrada.
+
+La CLI del piloto guarda una credencial revocable de una hora en un volumen dedicado. Para una API OIDC, define `PENTEST_AGENT_API_URL` con el origen HTTPS y proporciona un access token vigente mediante `PENTEST_AGENT_API_TOKEN`.
+
 ## Instalación
 
-Se requiere Python 3.10 o posterior.
+Se requiere Python 3.10 o posterior y [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
 git clone https://github.com/Blandskron/pentest-agent.git
 cd pentest-agent
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+uv sync --locked --no-editable --no-dev
+uv run --no-sync pentest-agent --help
 ```
 
-En PowerShell, activa el entorno con `.\.venv\Scripts\Activate.ps1` antes de instalar las dependencias.
+Para usar `pentest-agent` desde otra carpeta, activa el entorno con `source .venv/bin/activate` en Bash o `.\.venv\Scripts\Activate.ps1` en PowerShell. Los ejemplos con `python main.py` siguen funcionando desde el repositorio.
+
+Para elegir un archivo de configuración desde cualquier carpeta, define `PENTEST_AGENT_CONFIG` con su ruta absoluta. Sin esa variable, la CLI busca `config/config.yaml` en el directorio de trabajo y después usa `%APPDATA%/pentest-agent/config.yaml` en Windows o `$XDG_CONFIG_HOME/pentest-agent/config.yaml` en Linux (`~/.config/pentest-agent/config.yaml` si no se define la variable). Si no hay archivo, aplica valores por defecto. El archivo `.env` opcional se lee desde el directorio de configuración seleccionado.
 
 ## Planificación y análisis local
 
@@ -46,7 +75,39 @@ Si SQLite falla, el comando devuelve código 5 e indica la copia JSON conservada
 python main.py report generate --input ruta/al/resultado.json
 ```
 
-Con `--with-ai`, la CLI envía el tipo y detalle de los hallazgos a Groq para añadir un resumen. Revisa si esos campos contienen datos sensibles y configura `GROQ_API_KEY` en el entorno o en `config/.env`. El modelo se configura en la sección `llm` o mediante `GROQ_MODEL`.
+Con `--with-ai`, la CLI envía el tipo y detalle de los hallazgos a Groq para añadir un resumen. Revisa si esos campos contienen datos sensibles y configura `GROQ_API_KEY` en el entorno o en el archivo `.env` del directorio de configuración. El modelo se configura en la sección `llm` o mediante `GROQ_MODEL`.
+
+## Esquema PostgreSQL
+
+El backend dispone de una migración inicial para organizaciones, proyectos y autorizaciones. Consulta la [preparación de la base y la prueba de aislamiento](docs/planning/DATABASE_DESIGN.md#ejecutar-la-migración-inicial). La CLI de resultados guardados sigue usando SQLite.
+
+## API de autenticación
+
+La API ofrece inicio de sesión web OIDC y un contexto de acceso para clientes CLI. Consulta la [configuración del proveedor y los permisos de proyecto](docs/planning/API_SPEC.md#configurar-la-autenticación-de-task-012).
+
+La API también gestiona inventario y autorizaciones revisadas, con almacenamiento cifrado de documentos. Consulta las [rutas, permisos y requisitos de configuración](docs/planning/API_SPEC.md#inventario-y-autorizaciones-de-task-013).
+
+## Resultados históricos
+
+Valida un JSON o SQLite local antes de importarlo:
+
+```bash
+pentest-agent audit import-legacy --input copia.db --format sqlite --org-id UUID_ORG --project-id UUID_PROYECTO --dry-run
+```
+
+Para guardar el lote en PostgreSQL, configura `PENTEST_AGENT_API_TOKEN`, usa `--api-url https://tu-api.example` y retira `--dry-run`. Para SQLite, usa un respaldo consistente en modo de rollback journal sin archivos `-wal` o `-journal` activos. La importación conserva el tipo, el detalle, las URL disponibles y la procedencia. Omite el payload y los campos libres de evidencia. El SHA-256 de los bytes identifica el lote dentro del proyecto.
+
+## Contrato y aplicación web
+
+El contrato OpenAPI v1 está en [contracts/openapi-v1.json](contracts/openapi-v1.json). Con la API iniciada, consulta `/api/v1/docs`, `/api/v1/health` y `/api/v1/ready`. El último comprueba la conexión y la revisión de Alembic.
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+Define `PENTEST_AGENT_WEB_DIST` con la ruta absoluta a `frontend/dist` antes de iniciar la API. Sirve la aplicación desde el mismo origen HTTPS configurado para OIDC. Para probar el shell con datos simulados, desde `frontend` ejecuta `npx playwright install chromium` y `npm test`.
 
 ## Licencia
 

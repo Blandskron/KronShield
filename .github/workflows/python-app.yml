@@ -1,47 +1,156 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
 name: Python application
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.14"]
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
-    - name: Reject tracked runtime artifacts
-      shell: bash
-      run: |
-        tracked_ignored=$(git ls-files -ci --exclude-per-directory=.gitignore)
-        if [ -n "$tracked_ignored" ]; then
-          echo "Tracked paths match .gitignore. Review the index locally before publishing."
-          exit 1
-        fi
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v3
-      with:
-        python-version: "3.10"
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flake8 pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with pytest
-      run: |
-        python -m pytest
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.12.8"
+          python-version: ${{ matrix.python }}
+      - name: Reject tracked runtime artifacts
+        shell: bash
+        run: test -z "$(git ls-files -ci --exclude-standard)"
+      - name: Install locked dependencies and CLI
+        run: uv sync --locked --no-editable --extra api
+      - name: Lint
+        run: uv run --no-sync flake8 adapters application cli core domain gpt infra migrations reports tests integration main.py migrate.py --select=E9,F63,F7,F82
+      - name: Test
+        run: uv run --no-sync python -m pytest
+      - name: Smoke-test installed CLI from another directory
+        working-directory: ${{ runner.temp }}
+        shell: pwsh
+        env:
+          REPO: ${{ github.workspace }}
+        run: |
+          if ($IsWindows) {
+            $installed = Join-Path $env:REPO '.venv/Scripts/pentest-agent.exe'
+          } else {
+            $installed = Join-Path $env:REPO '.venv/bin/pentest-agent'
+          }
+          $installed = (Resolve-Path -LiteralPath $installed).Path
+          & $installed --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PENTEST_AGENT_CONFIG = Join-Path $PWD 'pentest-agent-test.yaml'
+          Set-Content -LiteralPath $env:PENTEST_AGENT_CONFIG -Value 'execution: {max_operations: 9}'
+          $plan = & $installed audit plan --url https://scope.example/api/ --environment lab
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (($plan | ConvertFrom-Json).limits.max_operations -ne 9) {
+            throw "Installed CLI did not load the configured limit"
+          }
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
+        env:
+          POSTGRES_PASSWORD: pentest_fixture_admin
+          POSTGRES_DB: pentest_fixture
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pentest_fixture"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.12.8"
+          python-version: "3.10"
+      - run: uv sync --locked --no-editable --extra api --extra postgres
+      - name: Verify migrations and tenant isolation
+        env:
+          PENTEST_AGENT_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:pentest_fixture_admin@127.0.0.1:${{ job.services.postgres.ports[5432] }}/pentest_fixture
+        run: uv run --no-sync python -m pytest integration
+
+  web-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.12.8"
+          python-version: "3.10"
+      - run: uv sync --locked --no-editable --extra api --python 3.10
+      - run: uv run --no-sync python -m contracts.export --check
+      - name: Find the previously published contract
+        if: github.event_name == 'pull_request'
+        id: baseline
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git cat-file -e "$BASE_SHA:contracts/openapi-v1.json"; then
+            git show "$BASE_SHA:contracts/openapi-v1.json" > "$RUNNER_TEMP/openapi-base.json"
+            echo "path=$RUNNER_TEMP/openapi-base.json" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Detect incompatible API changes
+        if: steps.baseline.outputs.path != ''
+        uses: oasdiff/oasdiff-action/breaking@14ca7009a63c417dfe27b7c44359c4bcccaf8eee # v0
+        with:
+          base: ${{ steps.baseline.outputs.path }}
+          revision: contracts/openapi-v1.json
+          fail-on: WARN
+          review: "false"
+          github-token: ""
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run contract
+        working-directory: frontend
+      - run: git diff --exit-code -- frontend/src/api.generated.ts
+      - run: npm run build
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+
+  pilot:
+    runs-on: ubuntu-latest
+    env:
+      PILOT_PORT: "18081"
+      PENTEST_AGENT_E2E_ORIGIN: http://localhost:18081
+      PENTEST_AGENT_E2E_PROJECT: pentest-pilot-ci
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: docker compose -p "$PENTEST_AGENT_E2E_PROJECT" up --build -d --wait --wait-timeout 120
+      - run: npm ci && npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Verify web and CLI parity on a fresh pilot
+        shell: bash
+        run: |
+          PENTEST_AGENT_E2E_BOOTSTRAP="$(docker compose -p "$PENTEST_AGENT_E2E_PROJECT" exec -T api cat /run/pilot/bootstrap)"
+          export PENTEST_AGENT_E2E_BOOTSTRAP
+          npm --prefix frontend test -- pilot.spec.ts
+      - if: always()
+        run: docker compose -p "$PENTEST_AGENT_E2E_PROJECT" down --volumes

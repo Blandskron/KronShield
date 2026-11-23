@@ -1,0 +1,141 @@
+x-backend: &backend
+  image: ${COMPOSE_PROJECT_NAME:-pentest-agent}-backend:local
+  pull_policy: never
+
+services:
+  secrets:
+    <<: *backend
+    user: "0:0"
+    command: ["python", "deploy/pilot.py", "seed"]
+    network_mode: none
+    volumes:
+      - pilot-secrets:/run/pilot
+      - cli-state:/cli-state
+      - type: volume
+        source: object-data
+        target: /objects-data
+        volume: { nocopy: true }
+  postgres:
+    image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
+    environment:
+      POSTGRES_DB: pentest
+      POSTGRES_PASSWORD_FILE: /run/pilot/admin
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    depends_on:
+      secrets: { condition: service_completed_successfully }
+    networks: [data]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - type: volume
+        source: pilot-secrets
+        target: /run/pilot
+        read_only: true
+        volume: { subpath: db }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d pentest"]
+      interval: 3s
+      timeout: 3s
+      retries: 25
+  migrate:
+    <<: *backend
+    command: ["python", "deploy/pilot.py", "migrate"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [data]
+    volumes:
+      - pilot-secrets:/run/pilot:ro
+  api:
+    <<: *backend
+    build: { context: ., target: python }
+    command: ["uvicorn", "--factory", "adapters.api.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      PENTEST_AGENT_AUTH_MODE: pilot
+      PENTEST_AGENT_WEB_ORIGIN: http://localhost:${PILOT_PORT:-8080}
+      PENTEST_AGENT_PILOT_FILES: /run/pilot
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [web, data]
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - type: volume
+        source: pilot-secrets
+        target: /run/pilot
+        read_only: true
+        volume: { subpath: app }
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3).close()"]
+      interval: 4s
+      timeout: 5s
+      retries: 15
+  gateway:
+    build: { context: ., target: gateway }
+    ports:
+      - "127.0.0.1:${PILOT_PORT:-8080}:8080"
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [web, edge]
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 4s
+      timeout: 5s
+      retries: 15
+  redis:
+    image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    command: ["redis-server", "--appendonly", "yes"]
+    networks: [storage]
+    volumes:
+      - redis-data:/data
+  objects:
+    image: chrislusf/seaweedfs:latest@sha256:7ca46aeae2f223b37e5d91593c17ab37738eec6df6ab69b48a0487f7643342b9
+    user: "10001:10001"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export AWS_ACCESS_KEY_ID=pilot-local AWS_SECRET_ACCESS_KEY="$$(cat /run/pilot/password)"
+        export S3_BUCKET=pilot
+        exec weed mini -dir=/data
+    depends_on:
+      secrets: { condition: service_completed_successfully }
+    networks: [storage]
+    volumes:
+      - type: volume
+        source: object-data
+        target: /data
+        volume: { nocopy: true }
+      - type: volume
+        source: pilot-secrets
+        target: /run/pilot
+        read_only: true
+        volume: { subpath: objects }
+  cli:
+    <<: *backend
+    profiles: [cli]
+    entrypoint: ["pentest-agent"]
+    environment:
+      PENTEST_AGENT_API_URL: http://gateway:8080
+      PENTEST_AGENT_CLI_STATE: /state
+      PENTEST_AGENT_PILOT_GATEWAY: "1"
+      PENTEST_AGENT_BROWSER_ORIGIN: http://localhost:${PILOT_PORT:-8080}
+    depends_on:
+      gateway: { condition: service_started }
+    networks: [web]
+    volumes:
+      - cli-state:/state
+
+networks:
+  edge:
+  web:
+    internal: true
+  data:
+    internal: true
+  storage:
+    internal: true
+volumes:
+  pilot-secrets:
+  postgres-data:
+  redis-data:
+  object-data:
+  cli-state:
