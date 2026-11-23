@@ -2,16 +2,11 @@
 
 import os
 import sys
-from base64 import b64encode
+from base64 import b64decode, b64encode
+from binascii import Error as Base64Error
 from pathlib import Path
 from secrets import token_urlsafe
-
-import psycopg
-from alembic import command
-from alembic.config import Config
-from psycopg import sql
-from sqlalchemy.engine import URL
-
+from tempfile import NamedTemporaryFile
 
 ROOT = Path("/run/pilot")
 APP_UID = 10001
@@ -49,6 +44,12 @@ def read(path: str) -> str:
 
 
 def migrate() -> None:
+    import psycopg
+    from alembic import command
+    from alembic.config import Config
+    from psycopg import sql
+    from sqlalchemy.engine import URL
+
     with psycopg.connect(host="postgres", dbname="pentest", user="postgres", password=read("db/admin")) as connection:
         for role, password in (
             ("pentest_agent_runtime", None),
@@ -68,5 +69,33 @@ def migrate() -> None:
     command.upgrade(Config("/app/alembic.ini"), "head")
 
 
+def restore_document_key(encoded: str) -> None:
+    """Replace the generated document key in the mounted recovery volume."""
+    try:
+        material = b64decode(encoded.strip(), validate=True)
+    except (Base64Error, ValueError):
+        material = b""
+    if len(encoded) > 128 or len(material) != 32:
+        raise ValueError("Expected a base64-encoded 32-byte document key")
+
+    directory = ROOT / "app"
+    temporary = None
+    try:
+        with NamedTemporaryFile("w", encoding="ascii", dir=directory, prefix=".document-key-", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(b64encode(material).decode() + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        os.chown(temporary, APP_UID, APP_UID)
+        temporary.chmod(0o440)
+        temporary.replace(directory / "document-key")
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
-    {"seed": seed, "migrate": migrate}[sys.argv[1]]()
+    if sys.argv[1] == "restore-document-key":
+        restore_document_key(sys.stdin.read(129))
+    else:
+        {"seed": seed, "migrate": migrate}[sys.argv[1]]()

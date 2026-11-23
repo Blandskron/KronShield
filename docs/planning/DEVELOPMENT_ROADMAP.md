@@ -1,6 +1,6 @@
 # Roadmap por versiones
 
-El número de versión indica una puerta de validación. La primera versión funcional de extremo a extremo es **v0.5.0 de laboratorio**. Con un clon y Docker Compose, un operador puede iniciar sesión, sembrar el laboratorio, autorizar el objetivo, validar el plan, iniciar desde web o CLI, seguir SSE, cancelar y descargar un informe HTML determinista. Hasta v1.0.0 los jobs activos solo usan fixtures y redes de laboratorio. En v1.0.0 el perfil autorizado R1 requiere puesta en servicio por instalación y evidencia de que el runner, egress y el control operativo cumplen las reglas. R2 se entrega para laboratorio con aprobación, mientras R3 permanece restringido a validación supervisada de laboratorio en esta versión.
+Los números de versión identifican puertas funcionales. El piloto disponible cubre el recorrido offline de alta, autorización, simulación y descarga del informe. La ejecución activa pertenece a fases futuras. El [estado del proyecto](../STATUS.md) indica qué tramos se han verificado y la versión declarada del paquete.
 
 | Versión | Tareas | Entrega y condición de salida |
 |---|---|---|

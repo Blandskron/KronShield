@@ -1,5 +1,7 @@
 # Especificación del frontend
 
+El frontend disponible usa React, TypeScript, Vite, Tailwind, TanStack Query, React Hook Form y Zod. Incluye login de piloto y OIDC, selección de organización y proyecto, dashboard con inventario y evaluaciones, gestión de membresías y mandatos, y planificador de revisión. La vista del plan abre enlaces de la CLI y ofrece el informe HTML. El resto de las pantallas y las propuestas visuales forman parte del diseño objetivo. [Desarrollo y pruebas](../DEVELOPMENT.md#frontend-y-piloto)
+
 Aplicación React/TypeScript/Vite, Tailwind CSS y componentes shadcn/ui, TanStack Query para caché, React Hook Form con Zod para formularios y Recharts para tendencias. Transporte SSE del mismo origen. El contrato OpenAPI genera tipos de API, mientras Zod valida formularios y eventos al entrar. La autorización visible se obtiene de `/me`; la API hace cumplir las decisiones. Reiniciar caché y streams cuando cambien organización, proyecto o sesión.
 
 ## Wireframes

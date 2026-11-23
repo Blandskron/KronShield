@@ -1,6 +1,11 @@
 # BLANDSKRON Pentest Agent
 
-CLI para preparar auditorías autorizadas y analizar respuestas HTTP guardadas. La ejecución activa está deshabilitada en esta etapa. El laboratorio integrado, el frontend y Docker Compose se detallan en el [plan de implementación](docs/planning/README.md).
+Piloto offline para gestionar autorizaciones, revisar alcance y analizar respuestas HTTP guardadas. La API, la web y la CLI comparten las simulaciones guardadas y sus informes. La ejecución activa está deshabilitada.
+
+- [Estado y tareas del proyecto](docs/STATUS.md)
+- [Desarrollo y pruebas](docs/DEVELOPMENT.md)
+- [Operación, copias y restauración](docs/OPERATIONS.md)
+- [Arquitectura y planificación](docs/planning/README.md)
 
 ## Piloto en Docker Compose
 
@@ -55,7 +60,7 @@ python main.py audit analyze --input respuesta.txt --baseline base.txt --check s
 python main.py audit analyze --response-missing --check sqli
 ```
 
-`audit plan` valida la estructura del destino y muestra el perfil, el presupuesto configurado y el estado de ejecución. El plan local indica `missing_authorization` y `disabled`. La CLI actual solo genera una vista previa, sin consultar DNS ni servicios. El laboratorio integrado se habilitará en v0.5.0.
+`audit plan` valida la estructura del destino y muestra el perfil, el presupuesto configurado y el estado de ejecución. El plan local indica `missing_authorization` y `disabled`. La vista previa funciona sin consultar DNS ni servicios. Para una revisión persistida con una autorización de proyecto, usa el planificador web o `plan create`.
 
 `audit analyze` recibe capturas UTF-8 de hasta 256 KiB cada una. Usa una respuesta base comparable del mismo endpoint. Un reflejo escapado o una firma de base de datos que ya aparece en esa respuesta se registra como observación de confianza baja. Una señal nueva en el contexto adecuado puede quedar como sospecha de confianza media. Si falta la respuesta de prueba, `--response-missing` registra un resultado inconcluso. El análisis de XSS usa el tipo de contenido capturado y conserva el contexto estático del HTML. La confirmación se reserva para una validación posterior. Los comandos de planificación y análisis funcionan sin una clave Groq.
 
@@ -79,7 +84,7 @@ Con `--with-ai`, la CLI envía el tipo y detalle de los hallazgos a Groq para a�
 
 ## Esquema PostgreSQL
 
-El backend dispone de una migración inicial para organizaciones, proyectos y autorizaciones. Consulta la [preparación de la base y la prueba de aislamiento](docs/planning/DATABASE_DESIGN.md#ejecutar-la-migración-inicial). La CLI de resultados guardados sigue usando SQLite.
+El backend usa migraciones Alembic para identidad, aislamiento, inventario, autorizaciones, simulación, importación y cuentas del piloto. Consulta la [preparación de PostgreSQL](docs/planning/DATABASE_DESIGN.md#ejecutar-la-migración-inicial). `audit save` usa SQLite local.
 
 ## API de autenticación
 

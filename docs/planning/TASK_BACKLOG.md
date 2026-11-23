@@ -1,5 +1,7 @@
 # Backlog de implementación
 
+El [estado del proyecto](../STATUS.md#backlog-verificado) registra qué tareas están implementadas, parciales o pendientes. Las fichas siguientes conservan el alcance objetivo y los criterios originales.
+
 46 tareas. P0 bloquea su hito, P1 aporta capacidad comprometida en ese hito. S/M/L/XL son tamaños relativos. Un XL se descompone en PR por contrato y fixture sin alterar sus dependencias ni su aceptación. Dependencias describen requisitos de merge. Las pruebas de cada tarea deben ser herméticas y la validación activa ocurre en laboratorio propio.
 
 ### **TASK-001 — Fijar línea base y convertir tests en herméticos**

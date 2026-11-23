@@ -1,8 +1,12 @@
 # Contratos API y CLI
 
-API base `/api/v1`, OpenAPI generado y cliente TS fijado a esquema en CI. JSON UTF-8. UUID para identificadores en API. CLI traduce slugs dentro de la org activa. Listas usan cursor opaco ligado a filtros y `limit` 1–100, orden por timestamp e ID. Fechas RFC 3339 UTC, expiración exclusiva. Modelos Pydantic estrictos, claves extras rechazadas, `schema_version` en jobs, eventos y herramientas. Usar enums discriminados por `profile_id`, sin campos abiertos para flags.
+API base `/api/v1`, OpenAPI generado y cliente TS fijado a esquema en CI. JSON UTF-8. UUID para identificadores en API. La CLI usa UUID de organización y proyecto. Las listas actuales aceptan `limit` de 1 a 100 y `after` como UUID de la página anterior. El campo `next_cursor` vale `null` al terminar. Fechas RFC 3339 UTC, expiración exclusiva. Los modelos de entrada rechazan claves adicionales. Las simulaciones guardadas incluyen `schema_version` y el perfil `scope-review`.
 
 ## Identidad y errores
+
+En el piloto, `/auth/mode` devuelve `pilot` y el primer acceso usa `/bootstrap/redeem`. La web usa `/auth/local/login` y la CLI emite y revoca credenciales con `/auth/local/token` y `/auth/local/revoke`. En modo OIDC, la web usa `/auth/login` y `/auth/callback`; la CLI consume un access token emitido por el proveedor. Las mutaciones de una sesión web validan `Origin` y el token CSRF. [Operación del piloto](../OPERATIONS.md#inicio-y-comprobaciones)
+
+La secuencia siguiente recoge el contrato objetivo de identidad. El OpenAPI versionado indica las rutas disponibles.
 
 Web inicia sesión OIDC Authorization Code + PKCE mediante API. Sesión de servidor, cookie HttpOnly, SameSite=Lax, Secure en TLS (única excepción de piloto localhost). Mutaciones con token CSRF y chequeo Origin. CLI interactiva usa OIDC Device Flow cuando esté disponible o Authorization Code + PKCE mediante loopback. El bootstrap Compose emite token de alta de un solo uso, limitado a loopback y con expiración. La identidad local de piloto se enrola con ese token y puede obtener un token CLI de corta duración vía `POST /auth/local/token` y una sesión web vía `POST /auth/local/login`. Configuración productiva deshabilita bootstrap y auth local. Automatización usa credenciales de servicio de alcance y TTL explícitos. Prohibir tokens en query. CORS cerrado por defecto. API evalúa roles y membresía. Recursos fuera del espacio visible devuelven 404. Sesión y rol se revalidan al conectar SSE y periódicamente durante el stream.
 
@@ -63,9 +67,9 @@ El plan conserva la revisión, el digest del documento, las reglas, los límites
 
 El esquema [OpenAPI v1](../../contracts/openapi-v1.json) se publica en `/api/v1/openapi.json`. Las respuestas de error usan `application/problem+json` con un identificador de petición. `/api/v1/health` mide disponibilidad del proceso y `/api/v1/ready` comprueba PostgreSQL y la revisión de Alembic. Desde la raíz, genera el contrato con `uv run --no-sync python -m contracts.export`. Desde `frontend`, ejecuta `npm run contract` para generar los tipos TypeScript.
 
-## Rutas
+## Rutas y contratos objetivo
 
-Los recursos de proyecto se anidan bajo `/projects/{project_id}` donde se indica `P`. El tenant activo deriva de sesión u organización elegida y se verifica con membresía.
+El [OpenAPI versionado](../../contracts/openapi-v1.json) enumera las rutas disponibles. La matriz siguiente también conserva contratos de etapas futuras. Los recursos de proyecto se anidan bajo `/projects/{project_id}` donde se indica `P`. El tenant activo deriva de sesión u organización elegida y se verifica con membresía.
 
 | Método y ruta | Entrada / salida | Privilegio |
 |---|---|---|
@@ -91,7 +95,15 @@ Los recursos de proyecto se anidan bajo `/projects/{project_id}` donde se indica
 | POST P/assessments/{id}/analysis | Tipo de agente y evidencia autorizada → 202 | Analista |
 | GET/POST /kill-switch | Estado o cambio registrado con motivo y revisión | Admin autorizado |
 
-### Cargas y eventos del recorrido integrado
+### Ejemplo de simulación disponible
+
+```json
+{"assessment_id":"7eac185d-3118-4645-9fba-ac563f9063db","authorization_id":"27ad3fc6-f994-4e87-97c1-6593eb399cfc","authorization_revision":2,"target_ids":["9d0048cf-b747-4daf-8573-39a6095208f8"],"profile_id":"scope-review"}
+```
+
+Envía el objeto a `POST /api/v1/projects/{project_id}/plans?org_id=...` con una clave `Idempotency-Key`. El estado registrado es `reviewed` o `blocked` y el resultado incluye `execution: disabled`.
+
+### Cargas y eventos del diseño objetivo
 
 ```json
 {"assessment_id":"7eac185d-3118-4645-8f18-120b086994a4","authorization_id":"27ad3fc6-f994-4ebe-b698-be9638b565de","authorization_revision":2,"target_ids":["9d0048cf-b747-4daf-9bf5-6ba31eec2560"],"profile_id":"web-baseline","options":{"max_requests":12}}
@@ -102,6 +114,10 @@ El plan devuelve `id,revision,hash,risk,status,effective_limits,denials[]`. Crea
 SSE usa `id: <seq>` monotónico por job y `event: job.state|tool.progress|finding.created|job.log`. Payload `{schema_version,job_id,seq,ts,level,message,data}`. Datos con allowlist, límite por evento y cursor confirmado después de commit. Heartbeat cada 15 s, reconexión con backoff. Cursor vencido devuelve 410 antes de abrir; cliente refresca job y reinicia desde marca visible. Redactar siempre; mostrar como texto literal.
 
 ## Paridad del catálogo web/CLI
+
+El cliente disponible ofrece `status`, `auth login`, `auth whoami`, `auth logout`, `project organizations`, listas de proyectos, objetivos, evaluaciones y autorizaciones, `lab seed`, `plan create`, `plan show` y `plan report`. La web y estos comandos comparten los ID y permisos de los recursos. Para los comandos locales sobre capturas, usa los grupos `audit` y `report`. [Comandos del piloto](../../README.md#piloto-en-docker-compose)
+
+La matriz siguiente conserva los nombres **objetivo** de las fases posteriores.
 
 | CLI objetivo | Interfaz web | Contrato |
 |---|---|---|

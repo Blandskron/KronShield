@@ -1,5 +1,9 @@
 # Brechas y orden de cierre
 
+Desde la línea base se cerraron la instalación reproducible, el empaquetado CLI, la migración a PostgreSQL para el piloto, la autenticación, el aislamiento y la interfaz web para revisión de alcance. Quedan como componentes futuros los controles de ejecución, la custodia avanzada, las integraciones y la operación empresarial. El [estado del proyecto](../STATUS.md) detalla las tareas y los tramos parciales.
+
+La siguiente matriz conserva el diagnóstico histórico y las metas de diseño.
+
 | Área | Situación de la línea base | Estado que debe demostrarse | Tareas y primera versión |
 |---|---|---|---|
 | Alcance | URL superficial y aceptación de redes privadas por defecto | Decisión denegatoria, reglas versionadas, ventana, exclusiones, DNS/IP fijada y transporte controlado | TASK-002–006 · v0.2.0 |

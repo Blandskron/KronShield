@@ -1,5 +1,7 @@
 # Arquitectura del motor de IA
 
+El único flujo de IA disponible es el resumen opcional de informes locales con `report generate --with-ai`. Envía el tipo y el detalle de los hallazgos a Groq y requiere una clave del proveedor. Los informes de revisión de alcance se generan desde la instantánea persistida sin invocar un modelo. El resto del documento describe el diseño objetivo. [Uso actual](../../README.md#informes-guardados)
+
 ## Separación de autoridad
 
 Un servicio de análisis recibe una solicitud autenticada sobre proyecto, evaluación y evidencia. Construye una vista redactada de tamaño acotado. Políticas de clasificación deterministas gobiernan qué información sale a un proveedor externo. Organización elige proveedor y modelo en allowlist, con modo local disponible. Por defecto IA apagada y ejecución determinista disponible. Para proveedor remoto se requiere habilitación de organización, verificación de términos de tratamiento/retención y selección explícita de campos. La respuesta es borrador con referencias. Una revisión humana aprueba su publicación. El LLM no posee credenciales, llamada a shell, acceso a red, cuotas de runner, control de estado ni permiso para aprobar.

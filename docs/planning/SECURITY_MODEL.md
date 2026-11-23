@@ -1,5 +1,7 @@
 # Modelo de seguridad y operación
 
+El piloto actual separa roles de organización y proyecto mediante RLS y usa cuentas locales en loopback u OIDC configurado para la API. Los mandatos se cifran antes de persistirlos. La revisión de alcance consulta autorización e inventario guardados y emite un informe histórico. La ejecución activa está deshabilitada. El modelo de operación de las fases futuras se conserva más abajo. [Recuperación y datos del piloto](../OPERATIONS.md)
+
 ## Activos, actores y fronteras
 
 Activos: autorización firmada, membresías, credenciales efímeras, evidencia, logs y capacidad de enviar tráfico. Actores: observador, operador, aprobador, administrador de organización, administrador de plataforma, identidad de servicio, objetivo y proveedor LLM. Identidad/roles ingresan por API; operador y objetivos se tratan como fuentes de entrada no confiables. El administrador de plataforma opera salud y kill switch global. El acceso de soporte a datos de proyectos requiere una asignación auditada.

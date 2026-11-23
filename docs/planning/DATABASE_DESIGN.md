@@ -1,5 +1,9 @@
 # Persistencia y aislamiento multiempresa
 
+El esquema PostgreSQL disponible usa el namespace `pentest_agent` y la tabla `public.pentest_agent_alembic_version`. Las revisiones 0001 a 0006 incorporan tenancy, autenticación, inventario y decisiones, planes offline, importación histórica y cuentas y membresías del piloto. Las sesiones, los documentos cifrados y los planes se almacenan en PostgreSQL. Los comandos locales de resultados siguen usando SQLite y JSON. [Copia y recuperación](../OPERATIONS.md#copia-de-postgresql-y-clave-de-documentos)
+
+Las entidades y dependencias adicionales de la matriz corresponden al modelo objetivo.
+
 PostgreSQL, SQLAlchemy 2 y Alembic. UUID opacos en recursos, timestamps UTC, claves de máquina estables para tipos y JSONB validado para extensiones. Usar constraints de unicidad y estado de dominio. Los campos de versión y hash se congelan al aprobar. Campos de plazo y evidencia derivados por servicio, nunca por cliente.
 
 | Entidad | Relación y diseño |
@@ -34,7 +38,7 @@ La migración `0004_scope_review` implementa evaluaciones y planes de revisión 
 - Índices: prefijos de FK compuesta, `(org_id,project_id,created_at DESC,id)` para listas, `(state,run_after,id)` parcial para pendientes de dispatcher, `(org_id,job_id,seq)` para SSE, `(retention_until)` parcial para evidencia sin hold, `(org_id,seq)` para cadena. Validar con EXPLAIN y volumen de fixture. Bloquear escrituras de bitácora por rol de app salvo función append dedicada.
 - Encolar y registrar evento con transacción. Transferir objetos en zona temporal, validar checksum y luego publicar referencia. Un reconciliador elimina huérfanos temporales vencidos y detecta referencias cuyo objeto falta. PostgreSQL confirma estado; tiempo de retención no depende de eventos Redis.
 
-## Migraciones y legado
+## Evolución prevista de migraciones y legado
 
 1. Alembic inicial crea org, usuarios/roles, proyectos, autorizaciones, targets y RLS. Segunda revisión añade ejecución, outbox, evidencia y eventos. Cambios expand/contract y backfills reiniciables por rango. Usuario de migraciones distinto de API/worker.
 2. Importador CLI offline, con `--dry-run` y org/proyecto obligatorios. Lee SQLite en modo solo lectura o JSON validado con límites. Reporta errores por registro y deduplica por digest de origen más ID/fila. No activa jobs. Marca `origin=legacy` y confianza no verificada. Sin inventar fecha, autorización ni URL específica ausentes. Conservar procedencia y preservar original bajo política de retención.

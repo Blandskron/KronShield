@@ -1,6 +1,6 @@
 # Plan de evolución de BLANDSKRON Pentest Agent
 
-Auditoría técnica y planificación sobre `61e08eae0b7674d9046050ee8313457fc60fa27c`. El repositorio de esta etapa contiene una CLI prototipo. Los diagramas, flujos y comandos Docker de estos documentos especifican el producto objetivo.
+La planificación parte de la auditoría sobre `61e08eae0b7674d9046050ee8313457fc60fa27c`. El repositorio ya ofrece un piloto offline con API, web, CLI, PostgreSQL y simulaciones guardadas. Para saber cuáles son las funciones disponibles, consulta el [estado del proyecto](../STATUS.md). Las secciones de arquitectura objetivo describen fases futuras.
 
 | Documento | Contenido |
 |---|---|
@@ -17,6 +17,6 @@ Auditoría técnica y planificación sobre `61e08eae0b7674d9046050ee8313457fc60f
 | [TASK_BACKLOG.md](TASK_BACKLOG.md) | 46 tareas verificables con dependencias y versiones. |
 | [IMPLEMENTATION_ORDER.md](IMPLEMENTATION_ORDER.md) | Rutas críticas, primeras 10 tareas, gates y estrategia de pruebas. |
 
-**Primer hito integrado v0.5.0.** Docker Compose inicia la aplicación y un laboratorio. Web y CLI autentican, validan el mismo plan, inician el mismo tipo de trabajo, muestran eventos, cancelan y descargan. Acceso a activos de clientes requiere perfil R1 habilitado tras los gates de v1.0.0. La ejecución parte de una autorización verificable y de parámetros definidos en el catálogo.
+**Hito verificado del piloto.** Compose inicia la plataforma; la web y la CLI comparten la revisión de alcance, el plan persistido y el informe descargable. Para instalarlo o restaurarlo, consulta la [guía operativa](../OPERATIONS.md).
 
 **Dependencias críticas.** Transporte y política antes de workers. RLS y autorización persistida antes de la API de jobs. Egress y cancelación antes de pruebas de red. Custodia, SSO, evaluación de aislamiento y restauración antes de habilitar clientes externos.

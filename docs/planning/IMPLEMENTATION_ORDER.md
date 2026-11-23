@@ -1,5 +1,7 @@
 # Orden de implementación y puertas
 
+El recorrido offline publicado cubre las tareas de base hasta TASK-020 con la excepción de los tramos activos de TASK-014. La simulación y el informe cubren un tramo de TASK-025. La comprobación de restauración y las guías operativas cubren tramos de TASK-041 y TASK-044. Consulta el [estado verificado](../STATUS.md) antes de aplicar la secuencia histórica de dependencias.
+
 Las dependencias del [backlog](TASK_BACKLOG.md) determinan el orden válido. Los números son IDs, no fechas. Para visualizar la ruta crítica de planificación, pesos relativos S=1, M=2, L=3, XL=5 y capacidad ideal para ramas paralelas. Los puntos comparan rutas; el calendario depende de recursos, revisiones y laboratorio.
 
 - Hasta el primer recorrido funcional, TASK-002 → 005 → 010 → 011 → 012 → 013 → 014 → 016 → 017 → 019 → 021 → 022 → 023 → 024 → 025.

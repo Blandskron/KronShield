@@ -1,6 +1,12 @@
 # Arquitectura actual y objetivo
 
-## Arquitectura observada
+## Arquitectura del piloto offline
+
+El gateway entrega el build de Vite y reenvía la API por una red interna de Compose. FastAPI autentica la sesión, valida los permisos y abre transacciones con el contexto de organización y proyecto. PostgreSQL aplica políticas RLS y conserva inventario, decisiones, documentos cifrados, revisiones y resultados importados. El proceso de migración usa un rol separado del rol de API.
+
+La CLI instalada tiene un flujo local sobre capturas y un cliente HTTP para el piloto. La web y el cliente HTTP usan el mismo contrato OpenAPI para consultar la revisión de alcance y descargar el informe. La API de revisión lee exclusivamente datos persistidos. [Estado del proyecto](../STATUS.md) · [Desarrollo y validación](../DEVELOPMENT.md)
+
+## Arquitectura observada en la línea base
 
 ```mermaid
 flowchart LR
@@ -13,7 +19,7 @@ flowchart LR
     D --> S
 ```
 
-## Arquitectura propuesta
+## Arquitectura objetivo
 
 ```mermaid
 flowchart LR
@@ -46,28 +52,13 @@ Dependencia de código `domain ← application ← adapters`. Dominio contiene a
 | `src/pentest_agent/adapters/tools`, `runner/` | Catálogo tipado, supervisor y perfiles de aislamiento |
 | `frontend/`, `deploy/`, `lab/`, `tests/` | Vite, Compose y gateway, fixtures y pruebas |
 
-## Despliegue desde el clon
+## Despliegue disponible desde el clon
 
-Compose es la distribución reproducible de desarrollo y piloto de un solo host. `compose.yaml` declara `gateway`, `api`, `migrate`, `postgres`, `redis`, `objects`, `dispatcher`, `worker`, `egress`, `cli` y el perfil `lab`. La UI se compila en una etapa Node y se sirve desde el gateway. `migrate` sale con éxito antes de que la API esté lista. `.dockerignore` excluye Git, secretos, bases y evidencia local. `.env.example` contiene claves de configuración sin secretos y tiene excepción explícita en `.gitignore`. Las imágenes usan lockfiles y digest, usuarios sin privilegios, capacidades mínimas, raíz de solo lectura donde aplique y volúmenes explícitos. La clave local se genera por instalación mediante bootstrap y se monta como secreto. La aplicación se expone solo en loopback en piloto. PostgreSQL, Redis y objetos se mantienen en redes internas. Los servicios activos se habilitan en v0.5.0 con red de laboratorio aislada. La separación de red y roles se verifica en el host de producción. [Redes de Compose](https://docs.docker.com/compose/how-tos/networking/).
+`compose.yaml` reúne `secrets`, `postgres`, `migrate`, `api`, `gateway`, `redis`, `objects` y el servicio `cli` ejecutado a demanda. El gateway es el único servicio con un puerto de host y escucha en loopback. La UI se compila en una etapa de Node y se sirve desde Nginx. PostgreSQL, almacenamiento y tráfico de API entre contenedores tienen redes internas. [Servicios de Docker Compose](https://docs.docker.com/reference/compose-file/services/)
 
-Secuencia objetivo documentada para v0.5.0. Los comandos ilustran el contrato futuro.
+El arranque genera secretos en un volumen y aplica migraciones antes de habilitar la API. El primer administrador se enrola con un código de un solo uso. El modo OIDC configurable usa un origen HTTPS y credenciales externas. La CLI de Compose conserva el token de piloto en un volumen dedicado. `lab seed` registra un activo sintético en el inventario. El recorrido completo desde el alta hasta el informe se verifica en CI. [Guía operativa y restauración](../OPERATIONS.md)
 
-```bash
-git clone https://github.com/Blandskron/pentest-agent.git
-cd pentest-agent
-docker compose --profile lab up --build -d --wait
-docker compose run --rm cli status
-docker compose run --rm cli auth login
-docker compose run --rm cli lab seed
-docker compose run --rm cli audit plan --project lab --target lab-http --profile web-baseline
-docker compose run --rm cli audit run --project lab --plan PLAN_ID --wait
-docker compose run --rm cli jobs logs JOB_ID --follow
-docker compose run --rm cli report generate --assessment ASSESSMENT_ID --format html
-```
-
-Acceso web piloto en `http://localhost:8080`. Primer administrador vía secreto de bootstrap de un solo uso, lectura desde archivo local restringido. El piloto crea una identidad local con credencial propia y sesión revocable en loopback. `auth login` admite esa identidad mediante entrada segura desde el contenedor. En producción, CLI en host usa Device Flow o callback loopback y CLI en contenedor usa Device Flow o credencial de servicio de alcance explícito. El CLI de Compose usa volumen de credencial dedicado con permisos mínimos, revocable. `lab seed` es idempotente, restringido a operador local de laboratorio, crea objetivo y autorización demo vigentes y registra actor. `status` es una sonda sin credenciales con campos mínimos. La exportación de CLI va a stdout o ruta local elegida explícitamente. Compose down preserva datos, y la guía de operaciones describe copias, restauración y limpieza explícita de volúmenes. v0.4.0 verifica clon → login → alta → simulación de plan. v0.5.0 verifica ejecución y entrega de informe determinista. v0.8.0 añade revisión y reportes completos.
-
-## Runtime y decisiones de fallos
+## Runtime y decisiones de fallos del diseño objetivo
 
 1. API valida actor, proyecto, plan y revisión de alcance. Inserta job y outbox en una transacción. Redis transporta IDs, PostgreSQL es autoridad de estado.
 2. Celery puede entregar duplicados. Worker adquiere lease con fencing token y actualiza por comparación. Se permite reintento antes de la primera operación externa; luego, pérdida del lease produce ejecución interrumpida con evidencia parcial. Los eventos se confirman en DB antes de mostrarse. [Workers de Celery](https://docs.celeryq.dev/en/stable/userguide/workers.html).

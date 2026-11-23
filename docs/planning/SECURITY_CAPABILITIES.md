@@ -1,5 +1,7 @@
 # Capacidades y trazabilidad metodológica
 
+Las tablas son un catálogo objetivo de capacidades y niveles de verificación. El piloto actual implementa revisión documental de alcance, análisis de capturas guardadas y exportación de informes. Los resultados importados conservan procedencia y confianza sin verificar. Consulta el [inventario de funciones disponibles](../STATUS.md) antes de usar esta matriz como referencia de cobertura.
+
 Referencias verificadas al 17 de noviembre de 2026. La implementación guarda por verificación el ID exacto de prueba/requisito y la versión, además de versión de regla, adaptador y fuente. Una matriz de cobertura versionada indica aplicado, excluido o inconcluso por objetivo.
 
 | Referencia vigente observada | Cobertura en la línea base | Uso propuesto |

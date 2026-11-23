@@ -1,5 +1,7 @@
 # Auditoría técnica del repositorio
 
+Este informe conserva las evidencias y rutas de la línea base histórica. El [estado del proyecto](../STATUS.md) identifica los controles incorporados desde entonces y sus verificaciones actuales.
+
 **Línea base:** `61e08eae0b7674d9046050ee8313457fc60fa27c` en `main`. Revisión 17 de noviembre de 2026. Se revisaron los 29 archivos versionados, los metadatos de historial relacionados con datos generados y las entradas de CLI. Se excluyeron los contenidos de `config/.env`, logs y cachés locales. No se envió tráfico de auditoría a objetivos ni solicitudes al proveedor de IA.
 
 ## Inventario y rutas de ejecución
@@ -42,7 +44,7 @@ La criticidad se refiere a impacto en la plataforma y su operador. «Confirmado�
 - `python main.py audit --help` y `python main.py report --help` exponen `run` y `generate`.
 - Python 3.13.14 y pytest 9.1.1. Pasaron cuatro pruebas con `requests.sessions.Session.request` simulado en error de conexión, resolución y sockets bloqueados para el proceso de pruebas y `GROQ_API_KEY` retirado del entorno de ese proceso. La prueba XSS verifica tipo de retorno y permite una lista vacía. Las pruebas no cubren un HTTP real, alcance, redirects, falsos positivos ni cancelación.
 - Las comprobaciones de aceptación de URL y de HTML reemplazaron respectivamente audit/cliente e IO. El análisis de destinos y redirecciones restantes es estático.
-- La madurez actual es **prototipo CLI de auditoría web**. El flujo es demostrable con fixtures y contiene piezas reutilizables. El control previo a la red, la trazabilidad y el aislamiento determinan la transición a un entorno empresarial.
+- La madurez en la línea base era **prototipo CLI de auditoría web**. El flujo es demostrable con fixtures y contiene piezas reutilizables. El control previo a la red, la trazabilidad y el aislamiento determinan la transición a un entorno empresarial.
 
 ## Registro de línea base de TASK-001
 
