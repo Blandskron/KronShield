@@ -63,3 +63,26 @@ test("sesión cerrada deja la pantalla de acceso", async ({ page }) => {
   await page.getByRole("button", { name: "Cerrar sesión" }).click();
   await expect(page.getByRole("link", { name: "Iniciar sesión" })).toHaveAttribute("href", "/api/v1/auth/login");
 });
+
+for (const width of [360, 1440]) {
+  test("acceso al piloto accesible y sin animación con movimiento reducido a " + width, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await fixture(page, false);
+    await page.route("**/api/v1/auth/mode", (route) => route.fulfill({ json: { mode: "pilot" } }));
+    await page.goto("/");
+    await expect(page.getByRole("img", { name: "Blandskron" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Acceso al piloto" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    const animations = await page.locator(".sign-in-identity").evaluate((element) =>
+      ["::before", "::after"].map((pseudo) => getComputedStyle(element, pseudo).animationName),
+    );
+    expect(animations).toEqual(["none", "none"]);
+    const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+    expect(results.violations.map((entry) => entry.id)).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath("acceso.png"), fullPage: true });
+
+    await page.getByRole("button", { name: "Primer acceso" }).click();
+    await expect(page.getByLabel("Código inicial")).toBeVisible();
+  });
+}

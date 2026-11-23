@@ -18,17 +18,21 @@ export function SignIn({ brand }: { brand: ReactNode }) {
   function send<T>(path: string, data: Record<string, string>) {
     return api<T>(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
   }
-  return <div className="sign-in">{brand}<main id="main" className="login-card">
-    <ShieldCheck size={34} aria-hidden /><h1>Accede a tu espacio</h1>
-    {mode.data?.mode === "pilot" ? <>
-      <Form key={String(bootstrap)} title={bootstrap ? "Administrador inicial" : "Acceso al piloto"}
-        fields={fields} label={bootstrap ? "Crear primer administrador" : "Iniciar sesión"} action={async (values) => {
-          const { username, password } = values;
-          if (bootstrap) await send("/bootstrap/redeem", values);
-          await send("/auth/local/login", { username, password });
-        }} completed={() => { void cache.invalidateQueries({ queryKey: ["session"] }); }} />
-      <Button onClick={() => setBootstrap(!bootstrap)}>{bootstrap ? "Volver a iniciar sesión" : "Primer acceso"}</Button>
-    </> : <><p>Inicia sesión para consultar los proyectos de tu organización.</p>
-      <Button asChild variant="primary"><a href="/api/v1/auth/login">Iniciar sesión</a></Button></>}
-  </main></div>;
+  return <div className="sign-in">
+    <div className="sign-in-identity">{brand}</div>
+    <main id="main" className="login-card">
+      <div className="login-icon"><ShieldCheck size={26} aria-hidden /></div>
+      <h1>Accede a tu espacio</h1>
+      {mode.data?.mode === "pilot" ? <>
+        <Form key={String(bootstrap)} title={bootstrap ? "Administrador inicial" : "Acceso al piloto"}
+          fields={fields} label={bootstrap ? "Crear primer administrador" : "Iniciar sesión"} action={async (values) => {
+            const { username, password } = values;
+            if (bootstrap) await send("/bootstrap/redeem", values);
+            await send("/auth/local/login", { username, password });
+          }} completed={() => { void cache.invalidateQueries({ queryKey: ["session"] }); }} />
+        <Button onClick={() => setBootstrap(!bootstrap)}>{bootstrap ? "Volver a iniciar sesión" : "Primer acceso"}</Button>
+      </> : <><p>Inicia sesión para consultar los proyectos de tu organización.</p>
+        <Button asChild variant="primary"><a href="/api/v1/auth/login">Iniciar sesión</a></Button></>}
+    </main>
+  </div>;
 }

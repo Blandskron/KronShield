@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Box, ChevronDown, ChevronRight, ClipboardList, LayoutDashboard, LogOut, Settings, ShieldCheck, ShieldHalf } from "lucide-react";
+import { Activity, Box, ChevronDown, ChevronRight, ClipboardList, LayoutDashboard, LogOut, Settings, ShieldCheck } from "lucide-react";
 import { StrictMode, useEffect, useId, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { api, ApiError, listOptions, type Models, usePages } from "./api";
@@ -7,6 +7,7 @@ import { Button, Card } from "./ui";
 import { Administration, NewAssessment, NewTarget, type ViewContext } from "./features/administration";
 import { AuthorizationForms, planLocation, Planner } from "./features/planning";
 import { SignIn } from "./features/signin";
+import blandskronLogo from "./assets/blandskron-horizontal.png";
 import "./styles.css";
 
 const sections = {
@@ -27,8 +28,10 @@ function currentSection(hash: string): Section {
 }
 
 function Brand() {
-  return <div className="brand"><span className="mark"><ShieldHalf size={22} aria-hidden /></span>
-    <span><strong>BLANDSKRON</strong><small>Gestión de auditorías</small></span></div>;
+  return <div className="brand">
+    <img src={blandskronLogo} alt="Blandskron" width={640} height={132} />
+    <span>Gestión de auditorías</span>
+  </div>;
 }
 
 function Select({ label, value, options, change }: {
