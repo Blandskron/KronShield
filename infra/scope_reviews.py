@@ -10,6 +10,7 @@ from sqlalchemy import Connection, text
 from application.access import AccessError, ProjectAccess
 from application.scope_review import canonical_json, fingerprint, review
 from infra.engagements import authorization, lock_authorization
+from infra.tenancy import lock_organization_work
 
 
 def _matching_row(connection: Connection, statement: str, parameters: dict, missing: str) -> dict:
@@ -46,6 +47,7 @@ def create_assessment(connection: Connection, caller: ProjectAccess, label: str)
 
 
 def _current_review(connection: Connection, caller: ProjectAccess, selection: dict) -> tuple[dict, datetime]:
+    lock_organization_work(connection, caller.org_id)
     authorization_id = UUID(selection["authorization_id"])
     lock_authorization(connection, caller.org_id, caller.project_id, authorization_id)
     latest = authorization(connection, authorization_id)

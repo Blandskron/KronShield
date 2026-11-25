@@ -7,6 +7,7 @@ import { Button, Card } from "./ui";
 import { Administration, NewAssessment, NewTarget, type ViewContext } from "./features/administration";
 import { AuthorizationForms, planLocation, Planner } from "./features/planning";
 import { SignIn } from "./features/signin";
+import { TeamSelection } from "./features/team-selection";
 import blandskronLogo from "./assets/blandskron-horizontal.png";
 import "./styles.css";
 
@@ -129,7 +130,10 @@ function ProjectContent({ user, org, project, section, ctx }: {
       <div className="metric-head"><span><Icon size={19} aria-hidden /></span><ChevronRight size={18} aria-hidden /></div>
       <h2>{name}</h2><strong className="metric-number">{count}{more ? "+" : ""}</strong><p>{detail}</p>
     </a>;
-  })}</div>{assessmentTable(true)}</>;
+  })}</div><div className="section-stack">
+    <TeamSelection ctx={ctx} frozen={!open} />
+    {assessmentTable(true)}
+  </div></>;
 }
 
 function Workspace({ session }: { session: Models["SessionInfo"] }) {

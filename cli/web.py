@@ -14,6 +14,8 @@ from uuid import UUID, uuid4
 import httpx
 import typer
 
+from domain.team_modes import TeamId
+
 
 auth = typer.Typer(no_args_is_help=True)
 project = typer.Typer(no_args_is_help=True)
@@ -201,6 +203,29 @@ def _project_list(resource, org_id, project_id, after):
 def list_projects(org_id: UUID = typer.Option(..., "--org-id"), after: Optional[UUID] = typer.Option(None, "--after")):
     with client() as http:
         _emit(_request(http, "GET", "/projects", params=_params(org_id, after)))
+
+
+@project.command("team-modes")
+def project_team_modes(org_id: UUID = typer.Option(...), project_id: UUID = typer.Option(...)) -> None:
+    """Consulta las especialidades y su disponibilidad."""
+    with client() as http:
+        _emit(_request(http, "GET", f"/projects/{project_id}/team-modes", params={"org_id": str(org_id)}))
+
+
+@project.command("team-show")
+def project_team_show(org_id: UUID = typer.Option(...), project_id: UUID = typer.Option(...)) -> None:
+    """Consulta la especialidad guardada y su revisión."""
+    with client() as http:
+        _emit(_request(http, "GET", f"/projects/{project_id}/team-selection", params={"org_id": str(org_id)}))
+
+
+@project.command("team-select")
+def project_team_select(org_id: UUID = typer.Option(...), project_id: UUID = typer.Option(...),
+                        mode: TeamId = typer.Option(...), version: int = typer.Option(..., min=0)) -> None:
+    """Guarda la especialidad con la revisión obtenida mediante team-show."""
+    with client() as http:
+        _emit(_request(http, "PUT", f"/projects/{project_id}/team-selection", params={"org_id": str(org_id)},
+                       headers={"If-Match": f'"{version}"'}, json={"mode_id": mode.value}))
 
 
 @target.command("list")

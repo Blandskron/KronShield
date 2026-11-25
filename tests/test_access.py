@@ -7,8 +7,9 @@ from application.access import AccessError, Action, authorize_project
 
 @pytest.mark.parametrize(("role", "allowed"), [
     ("viewer", {Action.READ}),
-    ("operator", {Action.READ, Action.MANAGE_TARGETS, Action.REQUEST_AUTHORIZATION, Action.MANAGE_ASSESSMENTS}),
-    ("approver", {Action.READ, Action.DECIDE_AUTHORIZATION}),
+    ("operator", {Action.READ, Action.MANAGE_TARGETS, Action.REQUEST_AUTHORIZATION, Action.MANAGE_ASSESSMENTS,
+                  Action.REQUEST_EVIDENCE}),
+    ("approver", {Action.READ, Action.DECIDE_AUTHORIZATION, Action.DECIDE_EVIDENCE, Action.PUBLISH_ANALYSIS}),
     ("project_admin", {Action.READ, Action.MANAGE_PROJECT}),
     ("unknown", set()),
 ])

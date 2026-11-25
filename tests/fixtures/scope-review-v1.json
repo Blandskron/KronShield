@@ -1,0 +1,55 @@
+{
+  "label": "Revisión histórica de alcance",
+  "plan": {
+    "id": "00000000-0000-4000-8000-000000000008",
+    "actor_id": "00000000-0000-4000-8000-000000000009",
+    "checked_at": "2026-01-01T12:00:00Z",
+    "hash": "fea0e6b805e6df818ae6372d4f6ff0b35c877dd84228494dc67b7bacd0584e5d",
+    "schema_version": 1,
+    "mode": "dry-run",
+    "profile_id": "scope-review",
+    "execution": "disabled",
+    "org_id": "00000000-0000-4000-8000-000000000001",
+    "project_id": "00000000-0000-4000-8000-000000000002",
+    "project_version": 3,
+    "assessment_id": "00000000-0000-4000-8000-000000000003",
+    "status": "reviewed",
+    "denials": [],
+    "authorization": {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "revision": 1,
+      "latest_revision": 1,
+      "status": "approved",
+      "document_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "document_evidence_id": "00000000-0000-4000-8000-000000000005",
+      "valid_from": "2026-01-01T00:00:00+00:00",
+      "valid_until": "2026-01-02T00:00:00+00:00",
+      "verifier_id": "00000000-0000-4000-8000-000000000006",
+      "scope_rules": [
+        {
+          "effect": "allow",
+          "kind": "fqdn",
+          "destination": "scope.example",
+          "scheme": null,
+          "ports": [],
+          "path_prefix": null
+        }
+      ],
+      "limits": {
+        "max_operations": 9
+      }
+    },
+    "targets": [
+      {
+        "version": 2,
+        "canonical_address": "https://scope.example/api/",
+        "environment": "lab",
+        "attribution": "first_party",
+        "third_party_id": null,
+        "id": "00000000-0000-4000-8000-000000000007",
+        "reason": "allowed",
+        "rule_id": "1"
+      }
+    ]
+  }
+}

@@ -28,6 +28,25 @@ def organization_role(connection: Connection, user_id: UUID, org_id: UUID) -> st
     """), {"org": org_id, "user": user_id})
 
 
+def organization_stop(connection: Connection, org_id: UUID) -> dict:
+    row = connection.execute(text("""
+        SELECT kill_switch AS enabled, stop_revision AS revision
+        FROM pentest_agent.organization WHERE id = :org
+    """), {"org": org_id}).mappings().one_or_none()
+    if row is None:
+        raise AccessError(404, "organization_not_found")
+    return dict(row)
+
+
+def update_organization_stop(connection: Connection, expected: int, enabled: bool, reason: str) -> dict:
+    row = connection.execute(text("""
+        SELECT enabled, revision FROM pentest_agent.update_organization_stop(:expected, :enabled, :reason)
+    """), {"expected": expected, "enabled": enabled, "reason": reason}).mappings().one_or_none()
+    if row is None:
+        raise AccessError(412, "version_conflict")
+    return dict(row)
+
+
 def inventory_page(connection: Connection, resource: str, after: UUID | None, limit: int) -> dict:
     rows = connection.execute(text(f"""
         SELECT {COLUMNS[resource]} FROM pentest_agent.{resource}

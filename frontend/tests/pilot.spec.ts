@@ -181,6 +181,31 @@ test("piloto real: altas, vigencia, roles y el mismo plan en web y CLI", async (
   expect(stored.ok()).toBeTruthy();
   expect(await stored.text()).toContain(plan.hash);
 
+  await signOut(page);
+  await signIn(page, "orgadmin");
+  const teamArgs = ["--org-id", org, "--project-id", projectId];
+  const selectionUrl = origin + "/api/v1/projects/" + projectId + "/team-selection?org_id=" + org;
+  const denied = await page.request.put(selectionUrl, {
+    headers: { Origin: origin!, "If-Match": '"0"' }, data: { mode_id: "red" },
+  });
+  expect(denied.status()).toBe(403);
+  expect((await denied.json()).code).toBe("csrf_denied");
+  await page.getByLabel("Elegir especialidad").selectOption("red");
+  await page.getByRole("button", { name: "Guardar especialidad" }).click();
+  await expect(page.getByText("Selección guardada · Red Team")).toBeVisible();
+  expect(cli(["project", "team-show", ...teamArgs]).selection.mode_id).toBe("red");
+  expect(cli(["auth", "login", "--username", "orgadmin", "--password-stdin"], password + "\n").session).toBe("active");
+  const rainbow = cli(["project", "team-select", ...teamArgs, "--mode", "rainbow", "--version", "1"]);
+  expect(rainbow.selection.mode_id).toBe("rainbow");
+  await page.reload();
+  await expect(page.getByText("Selección guardada · Rainbow Team")).toBeVisible();
+  await page.getByLabel("Elegir especialidad").selectOption("blue");
+  await page.getByRole("button", { name: "Guardar especialidad" }).click();
+  await expect(page.getByText("Selección guardada · Blue Team")).toBeVisible();
+  expect(cli(["auth", "login", "--username", "operator", "--password-stdin"], password + "\n").session).toBe("active");
+  await page.goto(plan.browser_url);
+  await expect(page.getByRole("heading", { name: "Plan " + plan.id })).toBeVisible();
+
   const repeat = await page.request.post(origin + "/api/v1/bootstrap/redeem", {
     headers: { Origin: origin! }, data: { code: bootstrap, username: "secondadmin", password },
   });
@@ -200,6 +225,13 @@ test("piloto real: altas, vigencia, roles y el mismo plan en web y CLI", async (
   expect((await persisted.json()).hash).toBe(plan.hash);
   const reportAfterRestart = await page.request.get(origin + reportPath);
   expect(await reportAfterRestart.body()).toEqual(await stored.body());
+  expect(cli(["project", "team-show", ...teamArgs]).selection.mode_id).toBe("blue");
+  const verifyResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/plans/" + plan.id + "/verify"));
+  await page.getByRole("button", { name: "Verificar vigencia" }).click();
+  const verified = await verifyResponse;
+  expect(verified.status()).toBe(200);
+  expect(await verified.json()).toMatchObject({ status: "verified", execution: "disabled", hash: plan.hash });
   expect(cli(["auth", "whoami"]).user_id).toBe(operator);
   expect(cli(["auth", "logout"]).session).toBe("closed");
   await test.info().attach("persisted-plan", { body: JSON.stringify({ org, project: projectId, plan: plan.id }),

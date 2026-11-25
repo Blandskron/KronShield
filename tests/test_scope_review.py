@@ -1,7 +1,71 @@
+import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from pathlib import Path
+from uuid import UUID, uuid4
 
+import pytest
+
+from adapters.api.contract import Plan
+from application.access import AccessError
 from application.scope_review import fingerprint, review
+from infra import scope_reviews
+from reports.report_html import render_scope_review_report
+
+
+@pytest.mark.parametrize("change", ["revoked", "expired"])
+def test_historical_v1_plan_remains_readable_when_verification_becomes_stale(change, monkeypatch):
+    fixture_path = Path(__file__).with_name("fixtures") / "scope-review-v1.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    expected = fixture["plan"]
+    # Read fixtures in universal newline mode so a CRLF checkout keeps the same reference bytes.
+    expected_html = fixture_path.with_suffix(".html").read_text(encoding="utf-8").encode("utf-8")
+    stored = {**expected, "checked_at": datetime.fromisoformat(expected["checked_at"].replace("Z", "+00:00"))}
+    mandate = expected["authorization"]
+    # The API serializes UTC datetimes as Z. The snapshot hash covers +00:00 timestamps.
+    public_plan = {**expected, "authorization": {
+        **mandate, "valid_from": "2026-01-01T00:00:00Z", "valid_until": "2026-01-02T00:00:00Z",
+    }}
+    record = {
+        **mandate,
+        "delegator_id": expected["actor_id"],
+        "environment": "lab",
+        "valid_from": datetime.fromisoformat(mandate["valid_from"]),
+        "valid_until": datetime.fromisoformat(mandate["valid_until"]),
+    }
+    state = {"state": "active", "version": expected["project_version"], "kill_switch": False}
+    clock = stored["checked_at"]
+
+    def current_review(_connection, _caller, selection):
+        result = review(expected["org_id"], expected["project_id"], state, selection,
+                        record, mandate["latest_revision"], expected["targets"], clock)
+        return result, clock
+
+    monkeypatch.setattr(scope_reviews, "_current_review", current_review)
+    plan_id = UUID(expected["id"])
+    columns = {key: stored[key] for key in ("id", "actor_id", "hash", "checked_at")}
+    row = {**columns, "snapshot": {key: value for key, value in stored.items() if key not in columns}}
+    monkeypatch.setattr(scope_reviews, "_matching_row", lambda *_args: row)
+
+    def assert_history():
+        plan = scope_reviews.plan(None, plan_id)
+        assert Plan.model_validate(plan).model_dump(mode="json") == public_plan
+        plan["checked_at"] = plan["checked_at"].isoformat()
+        assert render_scope_review_report(plan, fixture["label"]).encode("utf-8") == expected_html
+
+    assert_history()
+    assert scope_reviews.verify_plan(None, None, plan_id, expected["hash"]) == {
+        "id": plan_id, "hash": expected["hash"], "status": "verified", "execution": "disabled",
+    }
+
+    if change == "revoked":
+        record["status"] = "revoked"
+    else:
+        clock = record["valid_until"]
+
+    with pytest.raises(AccessError) as stale:
+        scope_reviews.verify_plan(None, None, plan_id, expected["hash"])
+    assert (stale.value.status, stale.value.code) == (409, "plan_state_changed")
+    assert_history()
 
 
 def test_scope_review_denies_excluded_targets_and_expired_authorizations():
@@ -43,8 +107,6 @@ def test_snapshot_fingerprint_is_independent_of_key_order():
 
 
 def test_scope_review_html_escapes_text_and_is_reproducible():
-    from reports.report_html import render_scope_review_report
-
     review_id = str(uuid4())
     hostile = "<script>not an executable document field</script>"
     snapshot = {"id": review_id, "org_id": str(uuid4()), "project_id": str(uuid4()), "hash": "a" * 64,

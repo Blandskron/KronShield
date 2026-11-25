@@ -68,3 +68,33 @@ def test_cli_report_emits_html_bytes_from_shared_api(monkeypatch):
     result = CliRunner().invoke(app, ["plan", "report", "--org-id", org, "--project-id", project, "--plan-id", plan])
     assert result.exit_code == 0, result.output
     assert result.stdout_bytes == html
+
+
+def test_cli_reads_and_updates_shared_team_selection(monkeypatch):
+    org, project = str(uuid4()), str(uuid4())
+    monkeypatch.setenv("PENTEST_AGENT_API_URL", "https://app.example")
+    monkeypatch.setenv("PENTEST_AGENT_API_TOKEN", "fixture")
+    http_client = httpx.Client
+    selected = {"version": 1, "selection": {"mode_id": "rainbow", "mode_version": 1}}
+
+    def send(request):
+        assert request.url.path == f"/api/v1/projects/{project}/team-selection"
+        assert request.url.params["org_id"] == org
+        if request.method == "GET":
+            return httpx.Response(200, json={"version": 0, "selection": None})
+        assert request.method == "PUT" and json.loads(request.content) == {"mode_id": "rainbow"}
+        if request.headers["If-Match"] != '"0"':
+            return httpx.Response(412, json={"code": "version_conflict"})
+        return httpx.Response(200, json=selected)
+
+    monkeypatch.setattr(web.httpx, "Client",
+                        lambda **kwargs: http_client(**kwargs, transport=httpx.MockTransport(send)))
+    runner = CliRunner()
+    options = ["--org-id", org, "--project-id", project]
+    read = runner.invoke(app, ["project", "team-show", *options])
+    assert read.exit_code == 0 and json.loads(read.stdout)["version"] == 0
+    select = ["project", "team-select", *options, "--mode", "rainbow", "--version"]
+    result = runner.invoke(app, [*select, "0"])
+    assert result.exit_code == 0 and json.loads(result.stdout) == selected
+    stale = runner.invoke(app, [*select, "1"])
+    assert stale.exit_code == 5 and "API 412 · version_conflict" in stale.stderr

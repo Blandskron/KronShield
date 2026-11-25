@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from adapters.api.auth import AUTH_HEADERS, RequestAuth, RequestIdentity
-from adapters.api.contract import Authorization, Customer, Document, Organization, Page, Project, Target
+from adapters.api.contract import Authorization, Customer, Document, Organization, OrganizationStop, Page, Project, Target
 from adapters.api.engagement_models import (
     AuthorizationInput, AuthorizationRevision, CustomerInput, CustomerPatch, DecisionInput,
-    OrganizationInput, OrganizationPatch, ProjectInput, ProjectPatch, TargetInput, TargetPatch,
+    OrganizationInput, OrganizationPatch, OrganizationStopInput, ProjectInput, ProjectPatch, TargetInput, TargetPatch,
 )
 from application.access import AccessError, Action
 from application.documents import MAX_DOCUMENT_SIZE, DocumentCipher
@@ -27,9 +27,11 @@ IfMatch = Annotated[str | None, Header(alias="If-Match")]
 PROJECT = "/projects/{project_id}"
 
 
-def _version(header: str | None) -> int:
+def _version(header: str | None, *, allow_initial: bool = False) -> int:
     if header is None:
         raise AccessError(428, "if_match_required")
+    if allow_initial and header == '"0"':
+        return 0
     if not re.fullmatch(r'"[1-9][0-9]{0,17}"', header):
         raise AccessError(400, "invalid_if_match")
     return int(header[1:-1])
@@ -89,6 +91,22 @@ def engagement_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Docum
     def get_organization(identity: Caller, org_id: UUID) -> dict:
         with organization(identity, org_id, allow_suspended=True) as (_, org):
             return org
+
+    @router.get("/organizations/{org_id}/stop", response_model=OrganizationStop)
+    def get_stop(identity: Caller, org_id: UUID, response: Response) -> dict:
+        with organization(identity, org_id, admin=True) as (connection, _):
+            status = data.organization_stop(connection, org_id)
+            response.headers["ETag"] = f'"{status["revision"]}"'
+            return status
+
+    @router.put("/organizations/{org_id}/stop", response_model=OrganizationStop)
+    def put_stop(identity: Caller, org_id: UUID, body: OrganizationStopInput,
+                 response: Response, if_match: IfMatch = None) -> dict:
+        with organization(identity, org_id, admin=True) as (connection, _):
+            status = data.update_organization_stop(connection, _version(if_match, allow_initial=True),
+                                                     body.enabled, body.reason)
+            response.headers["ETag"] = f'"{status["revision"]}"'
+            return status
 
     @router.patch("/organizations/{org_id}", response_model=Organization)
     def update_organization(identity: Caller, org_id: UUID, body: OrganizationPatch,
@@ -227,6 +245,7 @@ def engagement_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Docum
     async def upload_document(identity: Caller, request: Request, org_id: UUID, project_id: UUID) -> dict:
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/pdf":
             raise AccessError(415, "pdf_required")
+        await run_in_threadpool(store.check_project, identity.user_id, org_id, project_id, Action.REQUEST_AUTHORIZATION)
         payload = bytearray()
         async for chunk in request.stream():
             if len(payload) + len(chunk) > MAX_DOCUMENT_SIZE:

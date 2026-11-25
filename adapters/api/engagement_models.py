@@ -4,7 +4,7 @@ from ipaddress import ip_address, ip_network
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
 
 from domain.authorization import Attribution, RuleEffect, ScopeRule, ScopeTarget
 from domain.budget import BudgetLimits
@@ -25,6 +25,11 @@ class Contract(BaseModel):
 class OrganizationInput(Contract):
     slug: Slug
     admin_id: UUID
+
+
+class OrganizationStopInput(Contract):
+    enabled: StrictBool
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
 class CustomerInput(Contract):

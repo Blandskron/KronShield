@@ -101,6 +101,10 @@ class PostgresAuthStore:
         connection.execute(text("DELETE FROM pentest_agent.web_session WHERE token_hash = :token"),
                            {"token": session_hash})
 
+    def check_project(self, user_id: UUID, org_id: UUID, project_id: UUID, action: Action) -> None:
+        with self.project(user_id, org_id, project_id, action):
+            pass
+
     @contextmanager
     def project(
         self, user_id: UUID, org_id: UUID, project_id: UUID, action: Action,

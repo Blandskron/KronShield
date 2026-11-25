@@ -19,12 +19,16 @@ class Action(str, Enum):
     REQUEST_AUTHORIZATION = "authorizations:request"
     DECIDE_AUTHORIZATION = "authorizations:decide"
     MANAGE_PROJECT = "project:manage"
+    REQUEST_EVIDENCE = "evidence:request"
+    DECIDE_EVIDENCE = "evidence:decide"
+    PUBLISH_ANALYSIS = "analyses:publish"
 
 
 PROJECT_PERMISSIONS = {
     "viewer": frozenset({Action.READ}),
-    "operator": frozenset({Action.READ, Action.MANAGE_TARGETS, Action.REQUEST_AUTHORIZATION, Action.MANAGE_ASSESSMENTS}),
-    "approver": frozenset({Action.READ, Action.DECIDE_AUTHORIZATION}),
+    "operator": frozenset({Action.READ, Action.MANAGE_TARGETS, Action.REQUEST_AUTHORIZATION, Action.MANAGE_ASSESSMENTS,
+                           Action.REQUEST_EVIDENCE}),
+    "approver": frozenset({Action.READ, Action.DECIDE_AUTHORIZATION, Action.DECIDE_EVIDENCE, Action.PUBLISH_ANALYSIS}),
     "project_admin": frozenset({Action.READ, Action.MANAGE_PROJECT}),
 }
 

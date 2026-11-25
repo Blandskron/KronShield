@@ -1,6 +1,6 @@
 # Estado del proyecto
 
-Revisión del 23 de noviembre de 2026. La base publicada de esta revisión es [f534193](https://github.com/Blandskron/pentest-agent/commit/f5341939e9f79261c16e2abd3260f925bb801382). Los números del roadmap identifican hitos funcionales. La versión del paquete Python en `pyproject.toml` es `0.2.0`.
+Revisión del 23 de noviembre de 2026. La base publicada de esta revisión es [f534193](https://github.com/Blandskron/KronShield/commit/f5341939e9f79261c16e2abd3260f925bb801382). Los números del roadmap identifican hitos funcionales. La versión del paquete Python en `pyproject.toml` es `0.2.0`.
 
 El recorrido actual permite iniciar sesión en el piloto, configurar una organización y un proyecto, registrar activos y evaluaciones, gestionar autorizaciones con aprobación separada y simular el alcance. La web y la CLI consultan el mismo plan guardado. El informe HTML refleja la instantánea histórica de la revisión. La ejecución activa está deshabilitada.
 
@@ -27,7 +27,7 @@ El recorrido actual permite iniciar sesión en el piloto, configurar una organiz
 | TASK-044 | Parcial | Guías operativas y de desarrollo del piloto actual. |
 | TASK-045–046 | Pendientes | Validación de producción y entrega versionada. |
 
-La [ejecución de CI de la base publicada](https://github.com/Blandskron/pentest-agent/actions/runs/45240901498) pasó sus siete trabajos. La prueba del piloto verifica que un plan creado por CLI abre en la web y conserva el hash y los bytes del informe después de reiniciar.
+La [ejecución de CI de la base publicada](https://github.com/Blandskron/KronShield/actions/runs/45240901498) pasó sus siete trabajos. La prueba del piloto verifica que un plan creado por CLI abre en la web y conserva el hash y los bytes del informe después de reiniciar.
 
 - [Inicio y comandos](../README.md)
 - [Desarrollo y validación](DEVELOPMENT.md)

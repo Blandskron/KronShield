@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SCHEMA_REVISION = "0006_pilot_memberships"
+SCHEMA_REVISION = "0010_organization_stop"
 API_VERSION = "1.0.0"
 
 
@@ -59,6 +59,11 @@ class Organization(Output):
     slug: str
     state: Literal["active", "suspended"]
     version: int
+
+
+class OrganizationStop(Output):
+    enabled: bool
+    revision: int = Field(ge=0)
 
 
 class InventoryItem(Output):

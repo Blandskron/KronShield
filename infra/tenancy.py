@@ -7,6 +7,12 @@ from uuid import UUID
 from sqlalchemy import Connection, Engine, text
 
 
+def lock_organization_work(connection: Connection, org_id: UUID) -> None:
+    """Serialize protected work with stop changes for the duration of this transaction."""
+    connection.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
+                       {"key": f"organization-work/{org_id}"})
+
+
 @contextmanager
 def tenant_transaction(
     engine: Engine,

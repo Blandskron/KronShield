@@ -46,6 +46,7 @@ def legacy_routes(auth: RequestAuth, store: PostgresAuthStore) -> APIRouter:
     async def upload(request: Request, identity: Caller, org_id: UUID, project_id: UUID, format: FileFormat) -> dict:
         if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/octet-stream":
             raise AccessError(415, "binary_source_required")
+        await run_in_threadpool(store.check_project, identity.user_id, org_id, project_id, Action.MANAGE_ASSESSMENTS)
         raw = bytearray()
         async for chunk in request.stream():
             if len(raw) + len(chunk) > LIMITS[format]:

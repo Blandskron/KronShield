@@ -40,8 +40,8 @@ La CLI del piloto guarda una credencial revocable de una hora en un volumen dedi
 Se requiere Python 3.10 o posterior y [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-git clone https://github.com/Blandskron/pentest-agent.git
-cd pentest-agent
+git clone https://github.com/Blandskron/KronShield.git
+cd KronShield
 uv sync --locked --no-editable --no-dev
 uv run --no-sync pentest-agent --help
 ```

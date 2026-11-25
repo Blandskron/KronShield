@@ -20,11 +20,13 @@ from starlette.exceptions import HTTPException
 from adapters.api.auth import AUTH_HEADERS, SESSION_COOKIE, RequestAuth, auth_routes
 from adapters.api.contract import API_VERSION, SCHEMA_REVISION, Health, Problem
 from adapters.api.engagements import engagement_routes
+from adapters.api.evidence import evidence_routes
 from adapters.api.legacy import legacy_routes
 from adapters.api.memberships import membership_routes
 from adapters.api.oidc import OIDCProvider, OIDCSettings
 from adapters.api.pilot import pilot_routes
 from adapters.api.scope_reviews import scope_review_routes
+from adapters.api.team_modes import team_mode_routes
 from application.access import AccessError
 from application.authentication import Authentication
 from application.documents import DocumentCipher
@@ -107,6 +109,8 @@ def build_app(access: RequestAuth, store: PostgresAuthStore, *, cipher: Document
     if cipher is not None:
         api.include_router(engagement_routes(access, store, cipher))
         api.include_router(scope_review_routes(access, store))
+        api.include_router(team_mode_routes(access, store))
+        api.include_router(evidence_routes(access, store, cipher))
         api.include_router(legacy_routes(access, store))
 
     original_openapi = api.openapi

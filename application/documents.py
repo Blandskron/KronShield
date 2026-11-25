@@ -47,3 +47,23 @@ class DocumentCipher:
         if sha256(payload).hexdigest() != digest:
             raise AccessError(503, "document_unavailable")
         return payload
+
+    @staticmethod
+    def _evidence_context(org_id: UUID, project_id: UUID, evidence_id: UUID,
+                          permission_id: UUID, revision: int, source_digest: str) -> bytes:
+        return (b"pentest-agent:evidence:projection:v1:" + org_id.bytes + project_id.bytes + evidence_id.bytes
+                + permission_id.bytes + revision.to_bytes(4, "big") + bytes.fromhex(source_digest))
+
+    def encrypt_evidence(self, org_id: UUID, project_id: UUID, evidence_id: UUID, permission_id: UUID,
+                         revision: int, source_digest: str, projection: bytes) -> tuple[bytes, bytes]:
+        context = self._evidence_context(org_id, project_id, evidence_id, permission_id, revision, source_digest)
+        nonce = urandom(12)
+        return nonce, self.cipher.encrypt(nonce, projection, context)
+
+    def decrypt_evidence(self, org_id: UUID, project_id: UUID, evidence_id: UUID, permission_id: UUID,
+                         revision: int, source_digest: str, nonce: bytes, ciphertext: bytes) -> bytes:
+        context = self._evidence_context(org_id, project_id, evidence_id, permission_id, revision, source_digest)
+        try:
+            return self.cipher.decrypt(nonce, ciphertext, context)
+        except InvalidTag:
+            raise AccessError(503, "evidence_unavailable") from None

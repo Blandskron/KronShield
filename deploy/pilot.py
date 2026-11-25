@@ -94,8 +94,16 @@ def restore_document_key(encoded: str) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def sweep_evidence() -> None:
+    import psycopg
+
+    with psycopg.connect(host="postgres", dbname="pentest", user="postgres", password=read("db/admin")) as connection:
+        removed = connection.execute("SELECT pentest_agent.sweep_evidence_retention()").fetchone()[0]
+    print(f"Proyecciones retiradas: {removed}")
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "restore-document-key":
         restore_document_key(sys.stdin.read(129))
     else:
-        {"seed": seed, "migrate": migrate}[sys.argv[1]]()
+        {"seed": seed, "migrate": migrate, "sweep-evidence": sweep_evidence}[sys.argv[1]]()

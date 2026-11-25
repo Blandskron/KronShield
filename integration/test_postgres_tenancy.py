@@ -1,13 +1,14 @@
 """Exercise the migration against a disposable PostgreSQL database."""
 
 import asyncio
+import json
 import os
 from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -22,6 +23,8 @@ from adapters.api.contract import SCHEMA_REVISION
 from application.access import AccessError, Action
 from application.authentication import Authentication, Identity
 from application.documents import MAX_DOCUMENT_SIZE, DocumentCipher
+from domain.team_modes import TEAM_CATALOG, TeamId
+from infra.evidence import analysis_context
 from infra.auth_store import PostgresAuthStore
 from infra.tenancy import tenant_transaction
 
@@ -318,7 +321,8 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
     origin = "https://app.example"
     store = PostgresAuthStore(runtime)
     access = RequestAuth(Authentication(EngagementProvider(), store), origin)
-    api = build_app(access, store, cipher=DocumentCipher(b64encode(b"x" * 32).decode()))
+    cipher = DocumentCipher(b64encode(b"x" * 32).decode())
+    api = build_app(access, store, cipher=cipher)
     transport = httpx.ASGITransport(app=api)
     async with httpx.AsyncClient(transport=transport, base_url=origin) as client:
         async def call(method, path, role, status, *, org=None, json=None, data=None, headers=None, query=None):
@@ -327,7 +331,8 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
             params.update(query or {})
             response = await client.request(method, f"/api/v1{path}", params=params, headers=combined,
                                             json=json, content=data)
-            assert response.status_code == status, response.text
+            expected = status if isinstance(status, tuple) else (status,)
+            assert response.status_code in expected, response.text
             return response
 
         provision = {"slug": "engagement-org", "admin_id": str(users["admin"])}
@@ -409,6 +414,13 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
         old = b'{"url":"https://old.example","findings":[{"type":"info","detail":"old evidence"}]}'
         import_headers = {"Content-Type": "application/octet-stream"}
         imports = path + "/legacy-imports"
+        docs = path + "/authorization-documents"
+        pdf_headers = {"Content-Type": "application/pdf"}
+        pdf_payload = b"%PDF-1.4\nPrivate signed authorization sample\n%%EOF"
+        await check_upload_admission(call, admin, runtime, org, other_org, project, users["operator"], (
+            (imports, import_headers, {"format": "json"}, old),
+            (docs, pdf_headers, {}, pdf_payload),
+        ))
         await call("POST", imports, "viewer", 403, org=org, query={"format": "json"}, headers=import_headers, data=old)
         await call("POST", imports, "operator", 422, org=org, query={"format": "json"}, headers=import_headers, data=b"!")
         imported = (await call("POST", imports, "operator", 201, org=org, query={"format": "json"},
@@ -432,25 +444,22 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
         await call("DELETE", target_path, "operator", 204, org=org, headers={"If-Match": '"2"'})
         await call("GET", target_path, "viewer", 404, org=org)
 
-        docs = path + "/authorization-documents"
-        pdf_headers = {"Content-Type": "application/pdf"}
-        payload = b"%PDF-1.4\nPrivate signed authorization sample\n%%EOF"
-        await call("POST", docs, "operator", 415, org=org, data=payload)
+        await call("POST", docs, "operator", 415, org=org, data=pdf_payload)
         await call("POST", docs, "operator", 413, org=org, headers=pdf_headers,
                    data=b"%PDF-" + b"x" * MAX_DOCUMENT_SIZE)
         assert (await call("POST", docs, "operator", 422, org=org, headers=pdf_headers,
                            data=b"not a PDF")).json()["code"] == "invalid_document"
-        uploaded = (await call("POST", docs, "operator", 201, org=org, headers=pdf_headers, data=payload)).json()
-        digest = sha256(payload).hexdigest()
+        uploaded = (await call("POST", docs, "operator", 201, org=org, headers=pdf_headers, data=pdf_payload)).json()
+        digest = sha256(pdf_payload).hexdigest()
         assert uploaded["digest"] == digest
         with admin.connect() as connection:
             ciphertext = connection.scalar(text("SELECT ciphertext FROM pentest_agent.authorization_document"))
-            assert payload not in ciphertext
+            assert pdf_payload not in ciphertext
         download = docs + f"/{uploaded['id']}"
         await call("GET", download, "viewer", 404, org=org)
         await call("GET", download, "platform", 404, org=org)
         downloaded = await call("GET", download, "approver", 200, org=org)
-        assert downloaded.content == payload
+        assert downloaded.content == pdf_payload
         assert downloaded.headers["content-disposition"].startswith("attachment;")
         assert downloaded.headers["cache-control"] == "no-store"
 
@@ -484,14 +493,75 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
         approved = (await call("POST", record + "/decisions", "approver", 200, org=org, json=decision)).json()
         assert approved["effective_status"] == "active" and approved["verifier_id"] == str(users["approver"])
         plan_path = await check_scope_reviews(call, admin, org, project, path, target, initial["id"])
+        saved_plan = (await call("GET", plan_path, "viewer", 200, org=org)).json()
         saved_report = (await call("GET", plan_path + "/report", "viewer", 200, org=org)).content
+        config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        command.downgrade(config, "0006_pilot_memberships")
+        stale_schema = await call("GET", "/ready", "admin", 503)
+        assert stale_schema.json()["code"] == "schema_not_ready"
+        command.upgrade(config, "head")
+        await call("GET", "/ready", "admin", 200)
+
+        catalog = (await call("GET", path + "/team-modes", "viewer", 200, org=org)).json()["items"]
+        assert len(catalog) == 10 and all(not item["eligible_for_analysis"] for item in catalog)
+        digests = {item["manifest"]["id"]: item["digest"] for item in catalog}
+        selection = path + "/team-selection"
+        empty = await call("GET", selection, "viewer", 200, org=org)
+        assert empty.json() == {"version": 0, "selection": None} and empty.headers["etag"] == '"0"'
+        await call("PUT", selection, "admin", 428, org=org, json={"mode_id": "red"})
+        await call("PUT", selection, "operator", 403, org=org, headers={"If-Match": '"0"'}, json={"mode_id": "red"})
+        await call("GET", selection, "admin", 404, org=other_org)
+
+        selected = await call("PUT", selection, "admin", 200, org=org,
+                              headers={"If-Match": '"0"'}, json={"mode_id": "red"})
+        assert selected.headers["etag"] == '"1"'
+        assert selected.json()["selection"]["mode_digest"] == digests["red"]
+        assert selected.json()["selection"]["actor_id"] == str(users["admin"])
+        assert (await call("GET", selection, "viewer", 200, org=org)).json() == selected.json()
+
+        concurrent = await asyncio.gather(*[
+            client.put(f"/api/v1{selection}", params={"org_id": org}, json={"mode_id": mode},
+                       headers={"Authorization": "Bearer admin", "If-Match": '"1"'})
+            for mode in ("rainbow", "blue")
+        ])
+        assert sorted(response.status_code for response in concurrent) == [200, 412]
+        latest_selection = (await call("GET", selection, "viewer", 200, org=org)).json()
+        assert latest_selection["version"] == 2
+        assert latest_selection["selection"]["mode_id"] in {"rainbow", "blue"}
+        second_selection = f"/projects/{second_project}/team-selection"
+        assert (await call("GET", second_selection, "operator", 200, org=org)).json()["selection"] is None
+        await call("PUT", second_selection, "admin", 200, org=org,
+                   headers={"If-Match": '"0"'}, json={"mode_id": "gold"})
+        assert (await call("GET", selection, "viewer", 200, org=org)).json() == latest_selection
+
+        with tenant_transaction(runtime, org_id=org, project_id=project, user_id=users["viewer"]) as connection:
+            rows = connection.execute(text("""
+                SELECT project_id, version FROM pentest_agent.project_team_selection ORDER BY version
+            """)).all()
+            assert [(str(project_id), version) for project_id, version in rows] == [(project, 1), (project, 2)]
+        with pytest.raises(DBAPIError) as denied:
+            with tenant_transaction(runtime, org_id=org, project_id=project, user_id=users["operator"]) as connection:
+                connection.execute(text("""
+                    INSERT INTO pentest_agent.project_team_selection
+                        (org_id, project_id, version, mode_id, mode_version, mode_digest, actor_id)
+                    VALUES (:org, :project, 3, 'red', 1, :digest, :actor)
+                """), {"org": org, "project": project, "digest": digests["red"], "actor": users["operator"]})
+        assert denied.value.orig.sqlstate == "42501"
+        assert (await call("GET", plan_path, "viewer", 200, org=org)).json() == saved_plan
+        assert (await call("GET", plan_path + "/report", "viewer", 200, org=org)).content == saved_report
+        assert (await call("POST", plan_path + "/verify", "viewer", 200, org=org,
+                           json={"hash": saved_plan["hash"]})).json()["execution"] == "disabled"
+        await check_organization_stop(call, admin, runtime, org, other_org, users, plan_path, saved_plan)
+        await check_evidence_permissions(call, admin, store, cipher, org, other_org, project, users, path, saved_plan,
+                                         imported["id"], sha256(old).hexdigest())
+
         await call("POST", record + "/decisions", "approver", 409, org=org, json=decision)
         await call("POST", record + "/revisions", "operator", 409, org=org, json={**body, "previous_revision": 1})
 
         await call("POST", record + "/decisions", "approver", 200, org=org,
                    json={**decision, "decision": "revoke", "reason": "Mandate changed"})
         plan = (await call("GET", plan_path, "viewer", 200, org=org)).json()
-        assert plan["status"] == "reviewed"
+        assert plan == saved_plan and plan["status"] == "reviewed"
         report = await call("GET", plan_path + "/report", "viewer", 200, org=org)
         assert report.headers["content-type"].startswith("text/html")
         assert plan["hash"] in report.text and "Ejecución deshabilitada" in report.text
@@ -518,8 +588,225 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
         assert [item["revision"] for item in active] == [2]
 
         await call("DELETE", path, "admin", 204, org=org, headers={"If-Match": '"1"'})
+        await call("GET", selection, "viewer", 200, org=org)
+        await call("PUT", selection, "admin", 409, org=org, headers={"If-Match": '"2"'}, json={"mode_id": "gold"})
         await call("POST", path + "/targets", "operator", 409, org=org, json=target)
         await call("GET", record, "viewer", 200, org=org)
+
+
+async def check_organization_stop(call, admin, runtime, org, other_org, users, plan_path, plan):
+    org_path = f"/organizations/{org}"
+    stop = org_path + "/stop"
+    initial = (await call("GET", org_path, "admin", 200)).json()
+    before = await call("GET", stop, "admin", 200)
+    assert before.json() == {"enabled": False, "revision": 0} and before.headers["etag"] == '"0"'
+    await call("GET", f"/organizations/{other_org}/stop", "admin", 404)
+    await call("PUT", stop, "operator", 403, headers={"If-Match": '"0"'}, json={"enabled": True, "reason": "Denied"})
+    await call("PUT", stop, "admin", 428, json={"enabled": True, "reason": "Stop requested"})
+    await call("PUT", stop, "admin", 422, headers={"If-Match": '"0"'}, json={"enabled": True, "reason": " "})
+    with pytest.raises(DBAPIError) as denied:
+        with tenant_transaction(runtime, org_id=UUID(org), user_id=users["admin"]) as connection:
+            connection.execute(text("UPDATE pentest_agent.organization SET kill_switch = true WHERE id = :id"), {"id": org})
+    assert denied.value.orig.sqlstate == "42501"
+
+    outcomes = await asyncio.gather(*[
+        call("PUT", stop, "admin", (200, 412), headers={"If-Match": '"0"'},
+             json={"enabled": True, "reason": "Pause exercises"})
+        for _ in range(2)
+    ])
+    assert sorted(response.status_code for response in outcomes) == [200, 412]
+    assert (await call("GET", stop, "admin", 200)).json() == {"enabled": True, "revision": 1}
+    blocked = await call("POST", plan_path + "/verify", "operator", 409, org=org, json={"hash": plan["hash"]})
+    assert blocked.json()["code"] == "plan_state_changed"
+    assert (await call("GET", plan_path, "viewer", 200, org=org)).json() == plan
+
+    resumed = await call("PUT", stop, "admin", 200, headers={"If-Match": '"1"'},
+                         json={"enabled": False, "reason": "Review complete"})
+    assert resumed.json() == {"enabled": False, "revision": 2} and resumed.headers["etag"] == '"2"'
+    assert (await call("GET", org_path, "admin", 200)).json() == initial
+    await call("POST", plan_path + "/verify", "operator", 200, org=org, json={"hash": plan["hash"]})
+    with admin.connect() as connection:
+        journal = connection.execute(text("""
+            SELECT revision, enabled, actor_id, reason FROM pentest_agent.organization_stop_event
+            WHERE org_id = :org ORDER BY revision
+        """), {"org": org}).all()
+    assert journal == [(1, True, users["admin"], "Pause exercises"), (2, False, users["admin"], "Review complete")]
+
+
+async def check_evidence_permissions(call, admin, store, cipher, org, other_org, project, users, path, plan,
+                                     legacy_id, legacy_digest):
+    target = plan["targets"][0]["id"]
+    payload = json.dumps({"target_id": target, "observations": [{"control": "logging", "result": "observed"}]}).encode()
+    digest = sha256(payload).hexdigest()
+    withdrawn_payload = payload.replace(b'"observed"', b'"missing"')
+    withdrawn_digest = sha256(withdrawn_payload).hexdigest()
+    source = {"kind": "control-observations-v1", "target_id": target, "digest": digest,
+              "size_bytes": len(payload), "classification": "internal", "capability": "capture-review"}
+    removable_source = {**source, "digest": withdrawn_digest, "size_bytes": len(withdrawn_payload)}
+    legacy = {**source, "kind": "legacy-reference-v1", "digest": legacy_digest,
+              "size_bytes": None, "legacy_id": legacy_id}
+    mode = TEAM_CATALOG[TeamId.RED]
+    import_scope = plan["authorization"]
+    spec = {"plan_id": plan["id"], "plan_hash": plan["hash"], "mode_id": mode.id.value,
+            "mode_version": mode.version, "mode_digest": mode.digest, "valid_from": import_scope["valid_from"],
+            "valid_until": import_scope["valid_until"], "sources": [source, legacy, removable_source]}
+    root = path + "/evidence-permissions"
+    creation_key = {"Idempotency-Key": "scope-evidence-first-request"}
+    await call("POST", root, "viewer", 403, org=org, headers=creation_key, json=spec)
+    initial = (await call("POST", root, "operator", 201, org=org, headers=creation_key, json=spec)).json()
+    assert (await call("POST", root, "operator", 201, org=org, headers=creation_key, json=spec)).json() == initial
+    await call("POST", root, "operator", 409, org=org, headers=creation_key, json={**spec, "sources": [source]})
+    permission = root + "/" + initial["id"]
+    await call("GET", permission, "viewer", 404, org=org)
+    await call("GET", permission, "approver", 404, org=other_org)
+    assert (await call("GET", permission, "approver", 200, org=org)).json()["status"] == "pending"
+
+    upload_path = permission + "/revisions/1/sources/" + digest
+    content_type = {"Content-Type": "application/json"}
+
+    async def unexpected_body():
+        pytest.fail("Read evidence before checking its permission")
+        yield payload
+
+    await call("PUT", upload_path, "operator", 409, org=org, headers=content_type, data=unexpected_body())
+    await call("PUT", upload_path, "operator", 404, org=other_org, headers=content_type, data=unexpected_body())
+    approval = {"revision": 1, "decision": "approve", "reason": "Source and asset verified"}
+    await call("POST", permission + "/decisions", "operator", 403, org=org, json=approval)
+    approved = (await call("POST", permission + "/decisions", "approver", 200, org=org, json=approval)).json()
+    assert approved["status"] == "approved" and approved["approver_id"] == str(users["approver"])
+    await call("PUT", upload_path, "operator", 413, org=org, headers=content_type, data=payload + b" ")
+    await call("PUT", upload_path, "operator", 422, org=org, headers=content_type, data=payload[:-1])
+    receipts = await asyncio.gather(*[
+        call("PUT", upload_path, "operator", 200, org=org, headers=content_type, data=payload)
+        for _ in range(2)
+    ])
+    assert receipts[0].json() == receipts[1].json()
+    assert receipts[0].json()["source_digest"] == digest
+
+    ids = (UUID(org), UUID(project), UUID(initial["id"]))
+    with store.project(users["operator"], *ids[:2], Action.READ) as (connection, caller):
+        projected = analysis_context(connection, caller, cipher, ids[2], 1, digest)
+        assert projected["source"] == json.loads(payload)
+        assert "canonical_address" not in projected["scope"] and "authorization" not in projected["scope"]
+        old = analysis_context(connection, caller, cipher, ids[2], 1, legacy_digest)
+        assert old["source"] == {"id": legacy_id, "target_id": target, "origin": "legacy",
+                                 "confidence": "unverified", "finding_count": 1}
+        encrypted = connection.execute(text("SELECT ciphertext FROM pentest_agent.evidence_projection")).scalar_one()
+        assert b"logging" not in encrypted
+    with store.project(users["approver"], *ids[:2], Action.READ) as (connection, caller):
+        assert analysis_context(connection, caller, cipher, ids[2], 1, digest) == projected
+    with store.project(users["viewer"], *ids[:2], Action.READ) as (connection, caller):
+        assert connection.scalar(text("SELECT count(*) FROM pentest_agent.evidence_projection")) == 0
+        with pytest.raises(AccessError, match="evidence_permission_not_found"):
+            analysis_context(connection, caller, cipher, ids[2], 1, digest)
+
+    legacy_disposition = permission + "/revisions/1/sources/" + legacy_digest + "/disposition"
+    await call("PUT", legacy_disposition, "operator", 403, org=org, json={"reason": "Remove historic reference"})
+    receipt = (await call("PUT", legacy_disposition, "approver", 200, org=org,
+                          json={"reason": "Remove historic reference"})).json()
+    assert receipt["kind"] == "withdrawn" and receipt["actor_id"] == str(users["approver"])
+    assert (await call("GET", legacy_disposition, "operator", 200, org=org)).json() == receipt
+    with store.project(users["operator"], *ids[:2], Action.READ) as (connection, caller):
+        with pytest.raises(AccessError, match="evidence_disposed"):
+            analysis_context(connection, caller, cipher, ids[2], 1, legacy_digest)
+
+    removable_path = permission + "/revisions/1/sources/" + withdrawn_digest
+    await call("PUT", removable_path, "operator", 200, org=org, headers=content_type, data=withdrawn_payload)
+    removed = (await call("PUT", removable_path + "/disposition", "approver", 200, org=org,
+                          json={"reason": "Remove uploaded projection"})).json()
+    repeated = (await call("PUT", removable_path + "/disposition", "approver", 200, org=org,
+                            json={"reason": "A retry cannot replace the receipt"})).json()
+    assert repeated == removed
+    await call("PUT", removable_path, "operator", 409, org=org, headers=content_type, data=unexpected_body())
+    with store.project(users["operator"], *ids[:2], Action.READ) as (connection, caller):
+        assert connection.scalar(text("""
+            SELECT count(*) FROM pentest_agent.evidence_projection WHERE source_digest = :digest
+        """), {"digest": withdrawn_digest}) == 0
+        with pytest.raises(AccessError, match="evidence_disposed"):
+            analysis_context(connection, caller, cipher, ids[2], 1, withdrawn_digest)
+
+    revision = (await call("POST", permission + "/revisions", "operator", 201, org=org,
+                           headers={"Idempotency-Key": "scope-evidence-second-request"},
+                           json={"previous_revision": 1, "spec": spec})).json()
+    assert revision["revision"] == 2
+    historical = (await call("GET", permission, "operator", 200, org=org, query={"revision": 1})).json()
+    assert historical == approved
+    await call("PUT", upload_path, "operator", 409, org=org, headers=content_type, data=unexpected_body())
+
+    decisions = permission + "/decisions"
+    revoked = {**approval, "revision": 2, "decision": "revoke", "reason": "Scope changed"}
+    approval_race, _ = await asyncio.gather(
+        call("POST", decisions, "approver", (200, 409), org=org, json={**approval, "revision": 2}),
+        call("POST", decisions, "approver", 200, org=org, json=revoked),
+    )
+    await call("POST", decisions, "approver", 409, org=org, json={**approval, "revision": 2})
+    settled = (await call("GET", permission, "operator", 200, org=org)).json()
+    assert settled["status"] == "revoked" and settled["revocation_reason"] == revoked["reason"]
+    assert bool(settled["approved_at"]) == (approval_race.status_code == 200)
+
+    third = (await call("POST", permission + "/revisions", "operator", 201, org=org,
+                        headers={"Idempotency-Key": "scope-evidence-third-request"},
+                        json={"previous_revision": 2, "spec": spec})).json()
+    assert third["revision"] == 3
+    await call("POST", decisions, "approver", 200, org=org, json={**approval, "revision": 3})
+
+    async def revoke_during_upload():
+        await call("POST", decisions, "approver", 200, org=org, json={**revoked, "revision": 3})
+        yield payload
+
+    await call("PUT", permission + "/revisions/3/sources/" + digest, "operator", 409,
+               org=org, headers=content_type, data=revoke_during_upload())
+
+    with admin.begin() as connection:
+        projection = connection.execute(text("""
+            SELECT * FROM pentest_agent.evidence_projection
+            WHERE permission_id = :id AND revision = 1 AND source_digest = :digest
+        """), {"id": ids[2], "digest": digest}).mappings().one()
+        connection.execute(text("""
+            UPDATE pentest_agent.evidence_permission
+            SET spec = jsonb_set(spec, '{sources,0,retain_until}', to_jsonb((clock_timestamp() - interval '1 second')))
+            WHERE id = :id AND revision = 1
+        """), {"id": ids[2]})
+        assert connection.scalar(text("SELECT pentest_agent.sweep_evidence_retention()")) == 2
+        connection.execute(text("""
+            INSERT INTO pentest_agent.evidence_projection (
+                org_id, project_id, id, permission_id, revision, source_digest, projection_digest, nonce, ciphertext
+            ) VALUES (
+                :org_id, :project_id, :id, :permission_id, :revision, :source_digest, :projection_digest, :nonce, :ciphertext
+            )
+        """), dict(projection))
+        assert connection.scalar(text("SELECT pentest_agent.sweep_evidence_retention()")) == 1
+        assert connection.scalar(text("SELECT pentest_agent.sweep_evidence_retention()")) == 0
+    upload_disposition = upload_path + "/disposition"
+    expired = (await call("GET", upload_disposition, "operator", 200, org=org)).json()
+    assert expired["kind"] == "expired" and expired["reason"] == "retention_elapsed"
+
+
+async def check_upload_admission(call, admin, runtime, org, other_org, project, operator, uploads):
+    async def unexpected_body():
+        pytest.fail("Upload read the body before checking project access")
+        yield b""
+
+    def role(value):
+        with admin.begin() as connection:
+            connection.execute(text("""
+                UPDATE pentest_agent.project_membership SET role_id = :role
+                WHERE org_id = :org AND project_id = :project AND user_id = :operator
+            """), {"org": org, "project": project, "operator": operator, "role": value})
+
+    async def change_membership_while_streaming(content):
+        assert runtime.pool.checkedout() == 0
+        role("viewer")
+        yield content
+
+    for path, headers, query, content in uploads:
+        await call("POST", path, "viewer", 403, org=org, headers=headers, query=query, data=unexpected_body())
+        await call("POST", path, "operator", 404, org=other_org, headers=headers, query=query, data=unexpected_body())
+        try:
+            await call("POST", path, "operator", 403, org=org, headers=headers, query=query,
+                       data=change_membership_while_streaming(content))
+        finally:
+            role("operator")
 
 
 async def check_scope_reviews(call, admin, org, project, path, target, authorization_id):

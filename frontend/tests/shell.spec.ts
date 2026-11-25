@@ -8,6 +8,16 @@ const projects = [
 ];
 
 async function fixture(page: Page, authenticated = true) {
+  const modes = ["red", "blue", "purple", "yellow", "orange", "green", "white", "black", "gold", "rainbow"]
+    .map((id) => ({
+      manifest: { id, version: 1, label: id[0].toUpperCase() + id.slice(1) + " Team",
+        purpose: "Revisión de evidencia autorizada", inputs: ["Manifiesto de evidencia"],
+        output: "Informe documentado", workflow: [{ id: "review", kind: "capability", tool: "scope-record-review" }] },
+      digest: "fixture-" + id,
+      eligible_for_analysis: false,
+    }));
+  let selection: { version: number; selection: null | { mode_id: string; mode_version: number; mode_digest: string } } =
+    { version: 0, selection: null };
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.slice("/api/v1".length);
@@ -18,10 +28,23 @@ async function fixture(page: Page, authenticated = true) {
       return route.fulfill({ status: 204 });
     }
     if (path === "/me") return authenticated
-      ? route.fulfill({ json: { user_id: "user-a", source: "web", csrf_token: "test-csrf" } })
+      ? route.fulfill({ json: { user_id: "user-a", source: "web", csrf_token: "test-csrf",
+          permissions: url.searchParams.get("project_id") === "a" ? ["project:manage"] : ["project:read"] } })
       : route.fulfill({ status: 401, json: { code: "authentication_required" } });
     if (path === "/organizations") return data([org]);
     if (path === "/projects") return data(projects);
+    if (path.endsWith("/team-modes")) return route.fulfill({ json: { items: modes } });
+    if (path.endsWith("/team-selection")) {
+      if (path.startsWith("/projects/b/")) return route.fulfill({ json: { version: 0, selection: null } });
+      if (route.request().method() === "PUT") {
+        const { mode_id } = route.request().postDataJSON();
+        expect(route.request().headers()["x-csrf-token"]).toBe("test-csrf");
+        expect(route.request().headers()["if-match"]).toBe('"' + selection.version + '"');
+        selection = { version: selection.version + 1,
+          selection: { mode_id, mode_version: 1, mode_digest: "fixture-" + mode_id } };
+      }
+      return route.fulfill({ json: selection });
+    }
     if (path.startsWith("/projects/b/")) return data([]);
     if (path.endsWith("/assessments")) {
       return data([{ id: "one", label: "Revisión documental", created_at: "2026-11-23T12:00:00Z", actor_id: "user-a" }]);
@@ -62,6 +85,68 @@ test("sesión cerrada deja la pantalla de acceso", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Cerrar sesión" }).click();
   await expect(page.getByRole("link", { name: "Iniciar sesión" })).toHaveAttribute("href", "/api/v1/auth/login");
+});
+
+test("la especialidad se guarda por proyecto y los lectores consultan el catálogo", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/");
+  const select = page.getByLabel("Elegir especialidad");
+  await expect(select.locator("option:not([disabled])")).toHaveCount(10);
+  await select.focus();
+  await select.press("End");
+  await expect(select).toHaveValue("rainbow");
+  await page.getByText("Ver capacidades de Rainbow Team").click();
+  await expect(page.getByText("Análisis pendiente de habilitación")).toBeVisible();
+  const save = page.getByRole("button", { name: "Guardar especialidad" });
+  await save.focus();
+  await save.press("Enter");
+  await expect(page.getByText("Especialidad guardada.")).toBeVisible();
+  await expect(save).toBeFocused();
+  await page.reload();
+  await expect(select).toHaveValue("rainbow");
+
+  await select.selectOption("red");
+  const project = page.getByRole("combobox", { name: "Proyecto", exact: true });
+  await project.selectOption("b");
+  await expect(page.getByText("Todavía no hay una especialidad configurada.")).toBeVisible();
+  await expect(save).toHaveCount(0);
+  await expect(page.getByLabel("Consultar especialidad").locator("option:not([disabled])")).toHaveCount(10);
+  await project.selectOption("a");
+  await expect(select).toHaveValue("rainbow");
+});
+
+test("una selección que llega tarde no aparece en el proyecto nuevo", async ({ page }) => {
+  await fixture(page);
+  let started!: () => void;
+  const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => { finish = resolve; });
+  let completed!: () => void;
+  const responseAttempted = new Promise<void>((resolve) => { completed = resolve; });
+  await page.route((url) => url.pathname === "/api/v1/projects/a/team-selection", async (route) => {
+    started();
+    await pending;
+    try {
+      await route.fulfill({ json: { version: 1,
+        selection: { mode_id: "rainbow", mode_version: 1, mode_digest: "fixture-rainbow" } } });
+    } catch {
+      // Changing projects cancels the request if it is still in flight.
+    } finally {
+      completed();
+    }
+  });
+  try {
+    await page.goto("/");
+    await requestStarted;
+    await expect(page.getByText("Cargando especialidades…")).toBeVisible();
+    await page.getByRole("combobox", { name: "Proyecto", exact: true }).selectOption("b");
+    await expect(page.getByText("Todavía no hay una especialidad configurada.")).toBeVisible();
+  } finally {
+    finish();
+  }
+  await responseAttempted;
+  await expect(page.getByText("Selección guardada · Rainbow Team")).toHaveCount(0);
+  await expect(page.getByLabel("Consultar especialidad")).toHaveValue("");
 });
 
 for (const width of [360, 1440]) {
