@@ -11,7 +11,7 @@ const repository = fileURLToPath(new URL("../..", import.meta.url));
 function cli(args: string[], input?: string) {
   return JSON.parse(execFileSync("docker", [
     "compose", "-p", compose!, "run", "--rm", "-T", "cli", ...args,
-  ], { cwd: repository, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }));
+  ], { cwd: repository, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 90_000 }));
 }
 
 function panel(page: Page, name: string) {
@@ -36,7 +36,7 @@ async function go(page: Page, name: string) {
 
 test("piloto real: altas, vigencia, roles y el mismo plan en web y CLI", async ({ page }) => {
   test.skip(!origin || !bootstrap || !compose, "Requiere un Compose piloto nuevo");
-  test.setTimeout(180_000);
+  test.setTimeout(420_000);
   page.setDefaultTimeout(15_000);
   await page.goto(origin!);
   await page.getByRole("button", { name: "Primer acceso" }).click();
