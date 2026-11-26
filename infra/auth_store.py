@@ -107,9 +107,12 @@ class PostgresAuthStore:
 
     @contextmanager
     def project(
-        self, user_id: UUID, org_id: UUID, project_id: UUID, action: Action,
+        self, user_id: UUID, org_id: UUID, project_id: UUID, action: Action, *, guard_membership: bool = False,
     ) -> Iterator[tuple[Connection, ProjectAccess]]:
         with tenant_transaction(self.engine, user_id=user_id, org_id=org_id, project_id=project_id) as connection:
+            if guard_membership:
+                connection.execute(text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
+                                   {"key": f"analysis-membership/{org_id}/{user_id}"})
             row = connection.execute(text("""
                 SELECT om.role_id, pm.role_id, p.state
                 FROM pentest_agent.project AS p

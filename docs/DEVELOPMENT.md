@@ -2,6 +2,25 @@
 
 El repositorio contiene una CLI Typer, una API FastAPI, migraciones Alembic y un frontend React con Vite. El [estado del proyecto](STATUS.md) enumera los flujos disponibles.
 
+## Verificar el repositorio y la rama
+
+El remoto oficial es [Blandskron/KronShield](https://github.com/Blandskron/KronShield). Una copia existente puede conservar el nombre de carpeta `pentest-agent`. Desde esa carpeta, comprueba las URL de lectura y escritura:
+
+```bash
+git remote get-url origin
+git remote get-url --push origin
+```
+
+Si la URL de lectura apunta a otro repositorio, corrígela con `git remote set-url origin https://github.com/Blandskron/KronShield.git`. Si la copia tiene una URL de escritura explícita para otro repositorio, actualízala con `git remote set-url --push origin https://github.com/Blandskron/KronShield.git`.
+
+```bash
+git fetch origin
+git status --short --branch --untracked-files=all
+git rev-list --left-right --count main...origin/main
+```
+
+El resultado `0  0` confirma que ambos `main` apuntan al mismo historial. Para confirmar la igualdad del árbol de trabajo, verifica además que la rama activa sea `main` y que `git status` solo muestre la línea de rama. Revisa cualquier archivo que aparezca antes de incluirlo en una publicación.
+
 ## Entorno local
 
 Desde la raíz del repositorio, instala Python 3.10 o posterior, uv, Node.js 24 y Docker Compose para las pruebas con servicios. CI prueba Python 3.10 y 3.14 en Ubuntu y Windows.

@@ -1,0 +1,5 @@
+services:
+  api:
+    environment:
+      KRONSHIELD_LOCAL_INFERENCE: "1"
+    networks: [inference]

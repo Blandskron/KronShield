@@ -1,5 +1,19 @@
 # Roadmap de la plataforma de ciberseguridad ética
 
+## Identidad y experiencia de KronShield
+
+Esta línea de trabajo tiene IDs propios y reutiliza el backlog funcional de este documento. Parte del commit `a79d61a`. El alcance incluye la identidad pública, el frontend y la documentación de producto. La navegación refleja las operaciones que la API ya ofrece y conserva los enlaces de planes, contratos, permisos, datos históricos y comandos existentes.
+
+| ID | Depende de | Entrega | Criterio de aceptación |
+|---|---|---|---|
+| UX01 | — | Auditoría del frontend y referencia corporativa con procedencia de las fuentes, revisión de la skill externa y decisiones de diseño. | Documentar qué se adopta de BLANDSKRON y qué se adapta para una consola de seguridad. Identificar los flujos, estados y controles que deben preservarse. |
+| UX02 | UX01 | Identidad SVG, tipografía local, tokens semánticos y estilos de componentes con tema oscuro, claro y de sistema. | El símbolo se distingue a 16 px, el color no es el único indicador, el foco es visible y los recursos de marca no requieren un CDN. |
+| UX03 | UX02 | Shell responsive, landing y acceso, dashboard, tablas, formularios, consulta histórica, planificación y administración. | Los recorridos existentes funcionan con sus roles y estados, la preferencia visual se conserva, los enlaces históricos siguen funcionando y las vistas de revisión no generan actividad sobre objetivos. |
+| UX04 | UX03 | Evidencias en Chromium, regresión visual, axe, verificación manual de WCAG 2.2 AA y auditoría Lighthouse. | Capturas para escritorio y móvil, pruebas de teclado y movimiento reducido, métricas reproducibles y resultados pendientes claramente registrados. |
+| UX05 | UX02, UX04 | Guía de marca y sistema de diseño dentro de `docs`, README y metadatos web. | Las guías identifican tokens, activos, estados, compatibilidad y cómo repetir la validación visual. |
+
+La implementación y sus verificaciones se documentan en la [guía de marca](docs/BRAND_GUIDELINES.md) y el [sistema de diseño](docs/DESIGN_SYSTEM.md). La evaluación local usa Chromium y datos sintéticos. El piloto completo con Compose se valida con su recorrido de CI.
+
 **Decisión de arquitectura.** Ampliar el piloto con un único orquestador de IA por análisis, nueve especialidades declarativas y una composición Rainbow. La persona elige el modo en el dashboard del proyecto. La aplicación determina qué evidencias puede leer, qué funciones locales puede invocar y qué resultado puede publicar. El resultado del análisis es una evaluación documentada, una simulación de mesa o una propuesta de remediación revisable. La ejecución contra objetivos permanece en `disabled` en todas las fases.
 
 **Línea base.** 24 de noviembre de 2026, rama `main`, commit `9e438034a5929dc171a2290dac184c0c0917a6fe`, árbol inicialmente limpio. Las rutas y los símbolos de la auditoría corresponden a esa revisión. Las tablas de tareas describen trabajo futuro. [Árbol auditado](https://github.com/Blandskron/KronShield/tree/9e438034a5929dc171a2290dac184c0c0917a6fe)
@@ -167,6 +181,18 @@ Partir de E05, E07 y E10. Entrega visible: una solicitud produce un borrador con
 | C06 | C02, C03, B06 | Publicar API de creación, paso, consulta y cancelación por actor autorizado, con recuperación de reservas vencidas y verificación al confirmar. | Dos avances concurrentes consolidan un solo paso; corte entre reserva y confirmación no duplica hallazgos. Si cambia mandato, membresía o kill switch durante inferencia, el resultado queda descartado. Cancelar es idempotente y bloquea pasos posteriores. G2, G3, G5. |
 | C07 | C06 | Exponer decisión humana por conclusión y publicación de instantánea en `adapters/api` y `reports`. Usar plantillas escapadas y lista de referencias permitidas. | El autor no publica su borrador; evidencia retirada/ajena bloquea la publicación. Un aprobador autorizado registra motivo e identidad. El mismo resultado publicado produce los mismos bytes tras reiniciar; contenido no confiable se presenta como texto. G2, G3. |
 | C08 | A05, B03, B04, C06, C07 | Incorporar en el planificador el recorrido de evidencia, estado de análisis y revisión mediante los endpoints anteriores, con vistas por rol. | Operador ve requisitos y solicita, otro usuario revisa, un lector autorizado descarga. Bloqueo, espera de revisor, modo determinista y error de dependencia son distinguibles. Recargar/reanudar recupera el paso confirmado. G4. |
+
+C01 y C03 incorporan el registro interno de borradores, las reservas y la conciliación en `0011_offline_analysis_ledger`. C02 añade el despacho determinista y recibos por paso en `0012_analysis_step_outcomes`. Las pruebas usan PostgreSQL desechable, consumos sintéticos y un registro de funciones de prueba. [Límites y medición del piloto](docs/OPERATIONS.md#presupuesto-de-análisis-offline)
+
+C04 incorpora el contrato interno y un proveedor simulado reproducible en CI. La preparación comprueba el siguiente paso del manifiesto congelado, solicita la proyección con permiso de inferencia local y calcula el cupo con el presupuesto del análisis. El proveedor recibe instrucciones separadas de los datos. Cada cita de un borrador debe sustentar la misma observación estructurada. Cuando una fuente solo aporta un resumen legado, conserva su confianza sin verificar. La ausencia de evidencia para el paso genera abstención sin consumir cupo.
+
+El recibo interno de C04 devuelve las versiones de política, prompt y modelo, junto con los consumos y el resultado tipado o la causa acotada de rechazo. Las pruebas de contrato están en `tests/test_analysis_proposals.py`. C05 valida llama.cpp y Qwen mediante un perfil de Compose independiente con destino interno fijo. El ensayo en español produjo tres borradores idénticos admitidos por C04. También se verificaron el aislamiento y el estado de dependencia faltante. [Configuración y resultados del ensayo](docs/OPERATIONS.md#ensayo-de-inferencia-local)
+
+C06 publica la creación, el avance, la consulta y la cancelación del análisis offline. La migración `0013_analysis_lifecycle` registra cancelaciones y recibos privados de inferencia. Las pruebas con PostgreSQL comprueban la recuperación de reservas vencidas, la idempotencia concurrente y el descarte de resultados cuando cambian el mandato, el interruptor o la membresía antes de confirmar. La API usa la revisión de registros de alcance como capacidad offline inicial. [Contrato operativo de análisis](docs/OPERATIONS.md#api-de-análisis-offline)
+
+C07 registra decisiones humanas por conclusión y publica un HTML inmutable con digest y procedencia mediante `0014_analysis_publication`. El aprobador autorizado debe ser distinto del autor. La lista de fuentes del análisis se revalida tanto al publicar como al descargar. Las pruebas de integración verifican la retirada de acceso, las referencias ajenas, la persistencia del HTML byte por byte y el tratamiento de texto no confiable. [Revisión y publicación](docs/OPERATIONS.md#revisión-y-publicación-de-análisis)
+
+C08 incorpora al planificador el recorrido de White Team, desde la solicitud de evidencia hasta la descarga autorizada. Los enlaces mantienen proyecto, permiso y análisis, y las consultas recuperan el paso confirmado y la publicación al volver. Playwright cubre ambos roles, la denegación de descarga, la reanudación, la falta de proveedor y el análisis de accesibilidad. [Flujo de análisis offline](docs/OPERATIONS.md#api-de-análisis-offline)
 
 ### Fase D · habilidades y flujos de las nueve especialidades
 

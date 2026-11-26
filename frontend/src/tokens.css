@@ -1,0 +1,67 @@
+@font-face {
+  font-family: "Inter Variable";
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sora Variable";
+  src: url("@fontsource-variable/sora/files/sora-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --shield-emerald: #20d3a6;
+  --defense-teal: #0d9488;
+  --intelligence-blue: #38bdf8;
+  --kron-violet: #8b5cf6;
+  --midnight: #090f19;
+  --navy: #111c2b;
+  --slate: #263445;
+  --snow: #f1f5f9;
+  --critical: #dc2626;
+  --high: #f97316;
+  --medium: #eab308;
+  --low: var(--intelligence-blue);
+  --info: #94a3b8;
+  --success: #22c55e;
+  --ai: #a78bfa;
+  --canvas: light-dark(#eaf0f5, var(--midnight));
+  --surface: light-dark(#fff, #101a28);
+  --surface-raised: light-dark(#f7fafc, #152233);
+  --control: light-dark(#fff, #111d2c);
+  --ink: light-dark(#111c2b, var(--snow));
+  --muted: light-dark(#46596c, #a9bbce);
+  --border: light-dark(#cad7e2, #27384b);
+  --control-border: light-dark(#718497, #637e97);
+  --accent: light-dark(#08786c, var(--shield-emerald));
+  --accent-surface: light-dark(#dcf5ef, #153733);
+  --focus: light-dark(#126d91, #60cfff);
+  --danger-text: light-dark(#b02032, #ffa4ad);
+  --warning-text: light-dark(#725300, #f4d45b);
+  --okay-text: light-dark(#116132, #8ce3b1);
+  --shadow: 0 10px 32px light-dark(#233e5911, #01050a55);
+  --unit: 4px;
+  --radius-sm: calc(2 * var(--unit));
+  --radius-md: calc(3 * var(--unit));
+  --radius-lg: calc(4 * var(--unit));
+  --radius-xl: calc(6 * var(--unit));
+  --motion-fast: 160ms;
+  --motion-standard: 200ms;
+  --font-body: "Inter Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Sora Variable", var(--font-body);
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="system"] { color-scheme: light dark; }

@@ -17,9 +17,13 @@ def get_selection(connection: Connection, caller: ProjectAccess) -> dict | None:
     return dict(row) if row is not None else None
 
 
-def set_selection(connection: Connection, caller: ProjectAccess, mode: TeamMode, expected_version: int) -> dict:
+def lock_selection(connection: Connection, caller: ProjectAccess) -> None:
     lock = f"project-team-selection/{caller.org_id}/{caller.project_id}"
     connection.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": lock})
+
+
+def set_selection(connection: Connection, caller: ProjectAccess, mode: TeamMode, expected_version: int) -> dict:
+    lock_selection(connection, caller)
     project = inventory_item(connection, "project", caller.project_id)
     if project["state"] != "active":
         raise AccessError(409, "project_archived")

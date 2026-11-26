@@ -175,5 +175,5 @@ def project_legacy(source: Source, record: dict) -> dict:
             "confidence": "unverified", "finding_count": record["finding_count"]}
 
 
-def projection_bytes(value: dict) -> bytes:
+def projection_bytes(value: dict | list[dict]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")

@@ -1,4 +1,10 @@
-# BLANDSKRON Pentest Agent
+# KronShield — Intelligent Cybersecurity
+
+![KronShield](frontend/src/assets/kronshield-lockup.svg)
+
+**Intelligent Security. Responsible by Design.**
+
+Open Source · By BLANDSKRON
 
 Piloto offline para gestionar autorizaciones, revisar alcance y analizar respuestas HTTP guardadas. La API, la web y la CLI comparten las simulaciones guardadas y sus informes. La ejecución activa está deshabilitada.
 
@@ -6,6 +12,9 @@ Piloto offline para gestionar autorizaciones, revisar alcance y analizar respues
 - [Desarrollo y pruebas](docs/DEVELOPMENT.md)
 - [Operación, copias y restauración](docs/OPERATIONS.md)
 - [Arquitectura y planificación](docs/planning/README.md)
+- [Roadmap](ROADMAP.md)
+- [Guía de marca](docs/BRAND_GUIDELINES.md)
+- [Sistema de diseño](docs/DESIGN_SYSTEM.md)
 
 ## Piloto en Docker Compose
 

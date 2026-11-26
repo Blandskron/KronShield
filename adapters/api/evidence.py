@@ -67,7 +67,7 @@ class DispositionReceipt(Output):
     recorded_at: datetime
 
 
-def _key(value: str | None) -> str:
+def required_idempotency_key(value: str | None) -> str:
     if value is None:
         raise AccessError(428, "idempotency_key_required")
     if not re.fullmatch(r"[!-~]{16,128}", value):
@@ -83,7 +83,7 @@ def evidence_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Documen
     def request_permission(identity: Caller, org_id: UUID, project_id: UUID, spec: PermissionSpec,
                            idempotency_key: IdempotencyKey = None) -> dict:
         with store.project(identity.user_id, org_id, project_id, Action.REQUEST_EVIDENCE) as (connection, caller):
-            return data.request_permission(connection, caller, spec, _key(idempotency_key))
+            return data.request_permission(connection, caller, spec, required_idempotency_key(idempotency_key))
 
     @router.get("/{permission_id}", response_model=PermissionDetail)
     def get_permission(identity: Caller, org_id: UUID, project_id: UUID, permission_id: UUID,
@@ -95,7 +95,7 @@ def evidence_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Documen
     def revise_permission(identity: Caller, org_id: UUID, project_id: UUID, permission_id: UUID,
                           body: PermissionRevision, idempotency_key: IdempotencyKey = None) -> dict:
         with store.project(identity.user_id, org_id, project_id, Action.REQUEST_EVIDENCE) as (connection, caller):
-            return data.request_permission(connection, caller, body.spec, _key(idempotency_key),
+            return data.request_permission(connection, caller, body.spec, required_idempotency_key(idempotency_key),
                                            permission_id, body.previous_revision)
 
     @router.post("/{permission_id}/decisions", response_model=PermissionDetail)

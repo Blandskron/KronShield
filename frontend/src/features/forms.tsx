@@ -9,6 +9,7 @@ import { Button, Card } from "../ui";
 
 export type Field = {
   name: string; label: string; rule: z.ZodString; type?: string;
+  autoComplete?: string;
   options?: { value: string; label: string }[];
 };
 
@@ -57,7 +58,7 @@ export function Form({ title, fields, action, label, completed }: {
                 <option value="" disabled>Seleccionar</option>
                 {field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
-            : <input {...attributes} type={field.type ?? "text"} {...register(field.name)} />}
+            : <input {...attributes} type={field.type ?? "text"} autoComplete={field.autoComplete} {...register(field.name)} />}
           {error && <small id={id + "-error"} role="alert">{error.message}</small>}
         </div>;
       })}</div>

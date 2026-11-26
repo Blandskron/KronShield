@@ -234,6 +234,62 @@ test("piloto real: altas, vigencia, roles y el mismo plan en web y CLI", async (
   expect(await verified.json()).toMatchObject({ status: "verified", execution: "disabled", hash: plan.hash });
   expect(cli(["auth", "whoami"]).user_id).toBe(operator);
   expect(cli(["auth", "logout"]).session).toBe("closed");
+
+  await go(page, "Resumen");
+  await page.getByLabel("Elegir especialidad").selectOption("white");
+  await page.getByRole("button", { name: "Guardar especialidad" }).click();
+  await expect(page.getByText("Selección guardada · White Team")).toBeVisible();
+  await signOut(page);
+  await signIn(page, "operator");
+  await page.goto(plan.browser_url);
+  const evidence = { name: "observaciones.json", mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify({ target_id: asset.id, observations: [{ control: "logging", result: "observed" }] })) };
+  await page.getByLabel("Activo autorizado").selectOption(asset.id);
+  await page.getByLabel("Archivo JSON de observaciones").setInputFiles(evidence);
+  await page.getByRole("button", { name: "Solicitar permiso", exact: true }).click();
+  await expect(page.getByText("En espera de aprobación del permiso.")).toBeVisible();
+  const permissionUrl = page.url();
+
+  await signOut(page);
+  await signIn(page, "approver");
+  await page.goto(permissionUrl);
+  await page.getByLabel("Decisión del permiso").selectOption("approve");
+  await page.getByLabel("Motivo del permiso").fill("Observaciones autorizadas");
+  await page.getByRole("button", { name: "Registrar decisión del permiso" }).click();
+  await expect(page.getByText("Aprobado", { exact: true })).toBeVisible();
+
+  await signOut(page);
+  await signIn(page, "operator");
+  await page.goto(permissionUrl);
+  await page.getByText(/^Fuente ·/).click();
+  await page.getByLabel("Cargar archivo autorizado").setInputFiles(evidence);
+  await page.getByRole("button", { name: "Cargar evidencia" }).click();
+  await expect(page.getByText("Evidencia cargada.")).toBeVisible();
+  await page.getByRole("button", { name: "Crear análisis offline" }).click();
+  await expect(page.getByLabel("Modo de análisis")).toHaveValue("deterministic");
+  await page.getByRole("button", { name: "Avanzar siguiente paso" }).click();
+  await expect(page.getByText("En espera de revisión", { exact: true })).toBeVisible();
+  const analysisUrl = page.url();
+  await page.reload();
+  await expect(page.getByText("Paso confirmado", { exact: true })).toBeVisible();
+
+  await signOut(page);
+  await signIn(page, "approver");
+  await page.goto(analysisUrl);
+  await page.getByLabel("Decisión de la conclusión").selectOption("approve");
+  await page.getByLabel("Motivo de la decisión").fill("Control revisado en el piloto");
+  await page.getByRole("button", { name: "Registrar decisión", exact: true }).click();
+  await page.getByRole("button", { name: "Publicar informe" }).click();
+  await expect(page.getByText(/Informe publicado · SHA-256/)).toBeVisible();
+
+  await signOut(page);
+  await signIn(page, "operator");
+  await page.goto(analysisUrl);
+  await expect(page.getByText("Publicado", { exact: true })).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Descargar informe publicado" }).click();
+  expect((await downloaded).suggestedFilename()).toMatch(/^analysis-.+\.html$/);
+
   await test.info().attach("persisted-plan", { body: JSON.stringify({ org, project: projectId, plan: plan.id }),
     contentType: "application/json" });
 });

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 382 96" role="img" aria-labelledby="title">
+  <title id="title">KronShield — Intelligent Cybersecurity</title>
+  <rect width="382" height="96" rx="16" fill="#090F19"/>
+  <g transform="translate(14 16)">
+    <path d="M32 3 56 13v18c0 13-9 24-24 30C17 55 8 44 8 31V13L32 3Z" fill="#142C37" stroke="#20D3A6" stroke-width="3.5"/>
+    <path d="M22 19h5v11l12-11h7L33 31l13 13h-7L27 33v11h-5V19Z" fill="#F1F5F9"/>
+    <path d="M32 3 56 13v11" fill="none" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+  <text x="89" y="47" fill="#F1F5F9" font-family="Sora, Inter, sans-serif" font-size="32" font-weight="700" letter-spacing="-1.2">KronShield</text>
+  <text x="91" y="70" fill="#A9BBCE" font-family="Inter, sans-serif" font-size="15" font-weight="500">Intelligent Cybersecurity</text>
+</svg>

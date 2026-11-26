@@ -1,4 +1,4 @@
-# Plan de evolución de BLANDSKRON Pentest Agent
+# Plan de evolución de KronShield
 
 La planificación parte de la auditoría sobre `61e08eae0b7674d9046050ee8313457fc60fa27c`. El repositorio ya ofrece un piloto offline con API, web, CLI, PostgreSQL y simulaciones guardadas. Para saber cuáles son las funciones disponibles, consulta el [estado del proyecto](../STATUS.md). Las secciones de arquitectura objetivo describen fases futuras.
 

@@ -181,3 +181,43 @@ def render_scope_review_report(plan: dict, assessment_label: str) -> str:
     )
     return _document(str(plan["id"]), body, heading="Informe de revisión de alcance",
                      subject_label="Plan", title="Revisión de alcance")
+
+
+def render_analysis_report(publication: dict) -> str:
+    """Render the frozen offline publication with plain-text evidence references."""
+    def fields(pairs):
+        return "".join(f"<dt>{escape(label)}</dt><dd>{escape(str(value))}</dd>" for label, value in pairs)
+
+    metadata = (
+        ("Plan", publication["plan_id"]), ("SHA-256 del plan", publication["plan_hash"]),
+        ("SHA-256 del análisis", publication["snapshot_digest"]), ("Autor", publication["author_id"]),
+        ("Publicó", publication["publisher_id"]), ("Publicación", publication["published_at"]),
+        ("Modo", publication["mode_id"]), ("Versión del modo", publication["mode_version"]),
+        ("Versión de selección", publication["selection_version"]), ("Plantilla", publication["template_version"]),
+        ("Conclusiones rechazadas", publication["rejected"]),
+    )
+    body = [f"<h2>Registro de publicación</h2><dl>{fields(metadata)}</dl>", "<h2>Conclusiones aprobadas</h2>"]
+    if not publication["approved"]:
+        body.append("<p>Sin conclusiones aprobadas.</p>")
+    statuses = {"observed": "Observado", "missing": "No observado", "inconclusive": "Inconcluso"}
+    for item in publication["approved"]:
+        evidence = "".join(f"<li><code>{escape(digest)}</code></li>" for digest in item["citations"])
+        proof = item["provenance"]
+        conclusion = [
+            ("Estado", statuses[item["status"]]), ("Revisor", item["reviewer_id"]),
+            ("Motivo", item["reason"]), ("Decisión registrada", item["decided_at"]),
+            ("Herramienta", proof["tool"]), ("Especialidad", proof["mode_id"]),
+            ("Versión de especialidad", proof["mode_version"]),
+        ]
+        if item["observation"]:
+            conclusion.append(("Control", item["observation"]["control"]))
+        if "model" in proof:
+            conclusion.extend((
+                ("Política", proof["policy_version"]), ("Prompt", proof["prompt_version"]),
+                ("Modelo", proof["model"]["id"]), ("SHA-256 del modelo", proof["model"]["digest"]),
+            ))
+        body.append(f"<h3>{escape(item['id'])}</h3><dl>{fields(conclusion)}</dl>")
+        if evidence:
+            body.append(f"<h4>Referencias de evidencia</h4><ul>{evidence}</ul>")
+    return _document(publication["analysis_id"], "\n".join(body), heading="Informe de análisis offline",
+                     subject_label="Análisis", title="Análisis offline")

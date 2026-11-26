@@ -17,6 +17,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException
 
+from adapters.api.analyses import Inference, analysis_routes
 from adapters.api.auth import AUTH_HEADERS, SESSION_COOKIE, RequestAuth, auth_routes
 from adapters.api.contract import API_VERSION, SCHEMA_REVISION, Health, Problem
 from adapters.api.engagements import engagement_routes
@@ -38,8 +39,8 @@ ERROR_STATUSES = (400, 401, 403, 404, 409, 412, 413, 415, 422, 428, 503)
 
 
 def build_app(access: RequestAuth, store: PostgresAuthStore, *, cipher: DocumentCipher | None = None,
-              pilot: PilotStore | None = None, lifespan=None) -> FastAPI:
-    api = FastAPI(title="BLANDSKRON Pentest Agent", version=API_VERSION, lifespan=lifespan,
+              pilot: PilotStore | None = None, lifespan=None, inference: Inference | None = None) -> FastAPI:
+    api = FastAPI(title="KronShield", version=API_VERSION, lifespan=lifespan,
                   openapi_url="/api/v1/openapi.json", docs_url="/api/v1/docs", redoc_url=None,
                   responses={status: {"model": Problem, "description": HTTPStatus(status).phrase}
                              for status in ERROR_STATUSES})
@@ -111,6 +112,7 @@ def build_app(access: RequestAuth, store: PostgresAuthStore, *, cipher: Document
         api.include_router(scope_review_routes(access, store))
         api.include_router(team_mode_routes(access, store))
         api.include_router(evidence_routes(access, store, cipher))
+        api.include_router(analysis_routes(access, store, cipher, inference))
         api.include_router(legacy_routes(access, store))
 
     original_openapi = api.openapi
@@ -204,7 +206,12 @@ def create_app() -> FastAPI:
             client.close()
             engine.dispose()
 
-    api = build_app(access, store, cipher=cipher, pilot=pilot, lifespan=resources)
+    if os.getenv("KRONSHIELD_LOCAL_INFERENCE") == "1":
+        from infra.local_inference import MODEL, LocalProposalProvider
+        inference = (MODEL, LocalProposalProvider())
+    else:
+        inference = None
+    api = build_app(access, store, cipher=cipher, pilot=pilot, lifespan=resources, inference=inference)
     web_dist = os.getenv("PENTEST_AGENT_WEB_DIST")
     if web_dist:
         api.mount("/", StaticFiles(directory=web_dist, html=True), name="web")

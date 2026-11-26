@@ -7,6 +7,7 @@ from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
+from threading import Event
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
@@ -21,9 +22,15 @@ from adapters.api.app import build_app
 from adapters.api.auth import LOGIN_COOKIE, SESSION_COOKIE, RequestAuth
 from adapters.api.contract import SCHEMA_REVISION
 from application.access import AccessError, Action
+from application.analysis_dispatch import StepOutput, dispatch_step
+from application.analysis_proposals import ModelVersion, ProposalDependencyMissing, ProviderReply, generate_proposal
+from application.analyses import AnalysisDraft, Usage
 from application.authentication import Authentication, Identity
 from application.documents import MAX_DOCUMENT_SIZE, DocumentCipher
-from domain.team_modes import TEAM_CATALOG, TeamId
+from application.evidence import PermissionSpec
+from domain.team_modes import TEAM_CATALOG, TeamId, ToolId
+from infra import analyses, evidence
+from infra.analysis_dispatch import PostgresDispatch
 from infra.evidence import analysis_context
 from infra.auth_store import PostgresAuthStore
 from infra.tenancy import tenant_transaction
@@ -303,6 +310,26 @@ class EngagementProvider(FixtureProvider):
         return Identity("issuer", f"engagement-{token}")
 
 
+class AnalysisProvider:
+    model = ModelVersion(id="postgres-fixture", digest="a" * 64)
+
+    def __init__(self, store):
+        self.store = store
+        self.calls = 0
+        self.during_call = None
+        self.body = b'{"kind":"abstain"}'
+
+    def complete(self, instructions, context, **limits):
+        assert self.store.engine.pool.checkedout() == 0
+        assert "plan_id" not in context.decode()
+        assert "evidence" in json.loads(context)
+        assert limits["output_token_limit"] == 192
+        self.calls += 1
+        if self.during_call:
+            self.during_call()
+        return ProviderReply(body=self.body, input_tokens=100, output_tokens=10)
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
 async def test_inventory_and_immutable_authorization_workflow(database, membership, anyio_backend):
@@ -322,7 +349,8 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
     store = PostgresAuthStore(runtime)
     access = RequestAuth(Authentication(EngagementProvider(), store), origin)
     cipher = DocumentCipher(b64encode(b"x" * 32).decode())
-    api = build_app(access, store, cipher=cipher)
+    inference = AnalysisProvider(store)
+    api = build_app(access, store, cipher=cipher, inference=(inference.model, inference))
     transport = httpx.ASGITransport(app=api)
     async with httpx.AsyncClient(transport=transport, base_url=origin) as client:
         async def call(method, path, role, status, *, org=None, json=None, data=None, headers=None, query=None):
@@ -552,14 +580,21 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
         assert (await call("POST", plan_path + "/verify", "viewer", 200, org=org,
                            json={"hash": saved_plan["hash"]})).json()["execution"] == "disabled"
         await check_organization_stop(call, admin, runtime, org, other_org, users, plan_path, saved_plan)
-        await check_evidence_permissions(call, admin, store, cipher, org, other_org, project, users, path, saved_plan,
-                                         imported["id"], sha256(old).hexdigest())
+        dispatch, mandate_id, work = await check_evidence_permissions(
+            call, admin, store, cipher, org, other_org, project, users, path, saved_plan,
+            imported["id"], sha256(old).hexdigest(), inference,
+        )
+        proposal = generate_proposal(work.prepared, inference.model, inference)
 
         await call("POST", record + "/decisions", "approver", 409, org=org, json=decision)
         await call("POST", record + "/revisions", "operator", 409, org=org, json={**body, "previous_revision": 1})
 
         await call("POST", record + "/decisions", "approver", 200, org=org,
                    json={**decision, "decision": "revoke", "reason": "Mandate changed"})
+        receipt = dispatch.finish(mandate_id, "white", "lifecycle-stale-mandate", work.reservation_id,
+                                  output=StepOutput(status="inconclusive"), failure=None, proposal=proposal)
+        assert receipt["state"] == "blocked" and receipt["reason"] == "plan_state_changed"
+        assert_private_analysis_result(admin, mandate_id, None, None)
         plan = (await call("GET", plan_path, "viewer", 200, org=org)).json()
         assert plan == saved_plan and plan["status"] == "reviewed"
         report = await call("GET", plan_path + "/report", "viewer", 200, org=org)
@@ -634,7 +669,7 @@ async def check_organization_stop(call, admin, runtime, org, other_org, users, p
 
 
 async def check_evidence_permissions(call, admin, store, cipher, org, other_org, project, users, path, plan,
-                                     legacy_id, legacy_digest):
+                                     legacy_id, legacy_digest, inference):
     target = plan["targets"][0]["id"]
     payload = json.dumps({"target_id": target, "observations": [{"control": "logging", "result": "observed"}]}).encode()
     digest = sha256(payload).hexdigest()
@@ -699,6 +734,10 @@ async def check_evidence_permissions(call, admin, store, cipher, org, other_org,
         assert connection.scalar(text("SELECT count(*) FROM pentest_agent.evidence_projection")) == 0
         with pytest.raises(AccessError, match="evidence_permission_not_found"):
             analysis_context(connection, caller, cipher, ids[2], 1, digest)
+
+    await check_analysis_publication(call, admin, store, cipher, org, project, users, path, spec,
+                                     {**source, "capability": "scope-record-review"}, payload, inference)
+    mandate_probe = await check_analysis_ledger(call, admin, store, cipher, org, project, users, path, spec, legacy, inference)
 
     legacy_disposition = permission + "/revisions/1/sources/" + legacy_digest + "/disposition"
     await call("PUT", legacy_disposition, "operator", 403, org=org, json={"reason": "Remove historic reference"})
@@ -767,7 +806,8 @@ async def check_evidence_permissions(call, admin, store, cipher, org, other_org,
             SET spec = jsonb_set(spec, '{sources,0,retain_until}', to_jsonb((clock_timestamp() - interval '1 second')))
             WHERE id = :id AND revision = 1
         """), {"id": ids[2]})
-        assert connection.scalar(text("SELECT pentest_agent.sweep_evidence_retention()")) == 2
+        # The two withdrawn publication fixtures are removed with the two original projections.
+        assert connection.scalar(text("SELECT pentest_agent.sweep_evidence_retention()")) == 4
         connection.execute(text("""
             INSERT INTO pentest_agent.evidence_projection (
                 org_id, project_id, id, permission_id, revision, source_digest, projection_digest, nonce, ciphertext
@@ -780,6 +820,549 @@ async def check_evidence_permissions(call, admin, store, cipher, org, other_org,
     upload_disposition = upload_path + "/disposition"
     expired = (await call("GET", upload_disposition, "operator", 200, org=org)).json()
     assert expired["kind"] == "expired" and expired["reason"] == "retention_elapsed"
+    return mandate_probe
+
+
+async def check_analysis_ledger(call, admin, store, cipher, org, project, users, path, base_spec, legacy, inference):
+    scope = UUID(org), UUID(project)
+    operator = users["operator"]
+    second_operator = uuid4()
+    with admin.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO pentest_agent.identity (id, issuer, subject) VALUES (:actor, 'issuer', 'ledger-second-operator')
+        """), {"actor": second_operator})
+        connection.execute(text("""
+            INSERT INTO pentest_agent.organization_membership (org_id, user_id, role_id)
+            VALUES (:org, :actor, 'member')
+        """), {"org": org, "actor": second_operator})
+        connection.execute(text("""
+            INSERT INTO pentest_agent.project_membership (org_id, project_id, user_id, role_id)
+            VALUES (:org, :project, :actor, 'operator')
+        """), {"org": org, "project": project, "actor": second_operator})
+    selection_url = path + "/team-selection"
+    current = (await call("GET", selection_url, "operator", 200, org=org)).json()
+    rainbow = (await call("PUT", selection_url, "admin", 200, org=org,
+                          headers={"If-Match": f'"{current["version"]}"'}, json={"mode_id": "rainbow"})).json()
+    mode = TEAM_CATALOG[TeamId.RAINBOW]
+    spec = PermissionSpec.model_validate({
+        **base_spec, "mode_id": mode.id, "mode_version": mode.version, "mode_digest": mode.digest,
+        "sources": [{**legacy, "capability": ToolId.SCOPE_RECORD_REVIEW}], "allow_local_inference": True,
+    })
+
+    def prepare(actor, key="ledger-permission-001"):
+        with store.project(actor, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+            permission = evidence.request_permission(connection, caller, spec, key)
+        with store.project(users["approver"], *scope, Action.DECIDE_EVIDENCE) as (connection, caller):
+            evidence.decide(connection, caller, permission["id"], permission["revision"], "approve", "Fixture approved")
+        return AnalysisDraft(permission_id=permission["id"], permission_revision=1, selection_version=rainbow["version"],
+                             sources=(legacy["digest"],))
+
+    request = prepare(operator)
+    other_request = prepare(second_operator)
+
+    def create(actor, data, key):
+        with store.project(actor, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+            return analyses.create_draft(connection, caller, cipher, data, key)
+
+    one, replay = await asyncio.gather(*[
+        asyncio.to_thread(create, operator, request, "ledger-draft-0001") for _ in range(2)
+    ])
+    assert one == replay
+    assert one["snapshot"]["status"] == "draft" and one["snapshot"]["manifest_digest"] == mode.digest
+    assert set(one["snapshot"]["stage_manifests"]) == {step.id for step in mode.workflow}
+    assert one["snapshot"]["plan_hash"] == base_spec["plan_hash"]
+    with pytest.raises(AccessError, match="idempotency_conflict"):
+        create(operator, request.model_copy(update={"selection_version": 100}), "ledger-draft-0001")
+    two = create(operator, request, "ledger-draft-0002")
+    other = create(second_operator, other_request, "ledger-draft-0001")
+    with pytest.raises(RuntimeError, match="transaction aborted"):
+        with store.project(operator, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+            failed = analyses.create_draft(connection, caller, cipher, request, "ledger-rollback-001")
+            raise RuntimeError("transaction aborted")
+    with store.project(operator, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+        with pytest.raises(AccessError, match="analysis_not_found"):
+            analyses.get_draft(connection, caller, failed["id"])
+        assert len(analyses.events(connection, caller, one["id"])) == 1
+        assert connection.scalar(text("""
+            SELECT count(*) FROM pentest_agent.offline_analysis WHERE snapshot->>'permission_id' = :id
+        """), {"id": str(request.permission_id)}) == 2
+
+    queued = {name: create(operator, request, f"dispatch-draft-{name}")["id"]
+              for name in ("normal", "missing", "archive", "timeout", "foreign")}
+    revoke_request = prepare(operator, "dispatch-revocable-permission")
+    queued["revoke"] = create(operator, revoke_request, "dispatch-draft-revoke")["id"]
+    await check_analysis_api(call, admin, org, project, users, path, request, inference)
+
+    stop_id = create(operator, request, "lifecycle-stop-draft")["id"]
+
+    await call("PUT", selection_url, "admin", 200, org=org,
+               headers={"If-Match": f'"{rainbow["version"]}"'}, json={"mode_id": "yellow"})
+    assert create(operator, request, "ledger-draft-0001") == one
+    with pytest.raises(AccessError, match="analysis_selection_changed"):
+        create(operator, request, "ledger-draft-0004")
+
+    def reserve(actor, draft, key, step="white", usage=Usage(input_bytes=10)):
+        try:
+            with store.project(actor, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+                return analyses.reserve_step(connection, caller, draft["id"], key, step, usage)
+        except AccessError as error:
+            return error.code
+
+    first = reserve(operator, one, "ledger-step-00001", usage=Usage(calls=1, input_tokens=9000))
+    assert isinstance(first, dict) and not first["replayed"]
+    assert reserve(operator, one, "ledger-step-00001", usage=Usage(calls=1, input_tokens=9000)) == {
+        **first, "replayed": True,
+    }
+    assert reserve(operator, one, "ledger-step-00001") == "idempotency_conflict"
+    assert reserve(operator, one, "ledger-step-00002", "unknown") == "unknown_analysis_step"
+    outcomes = await asyncio.gather(
+        asyncio.to_thread(reserve, operator, two, "ledger-step-00003"),
+        asyncio.to_thread(reserve, second_operator, other, "ledger-step-00003"),
+    )
+    assert sum(result == "analysis_project_busy" for result in outcomes) == 1
+    winner_index = next(i for i, result in enumerate(outcomes) if isinstance(result, dict))
+    winner_actor, winner_draft = [(operator, two), (second_operator, other)][winner_index]
+    with store.project(operator, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+        measured = Usage(calls=1, input_tokens=8000)
+        settled = analyses.settle_step(connection, caller, one["id"], first["id"], measured)
+        assert settled["outcome"] == "measured" and settled["input_tokens"] == 8000
+        assert analyses.settle_step(connection, caller, one["id"], first["id"], measured) == settled
+        assert [(event["sequence"], event["kind"]) for event in analyses.events(connection, caller, one["id"])] == [
+            (1, "draft_recorded"), (2, "step_reserved"), (3, "step_settled"),
+        ]
+    assert reserve(operator, one, "ledger-step-00004", "blue",
+                   Usage(calls=1, input_tokens=4001)) == "analysis_budget_exceeded"
+    pending = outcomes[winner_index]
+    with admin.begin() as connection:
+        connection.execute(text("""
+            UPDATE pentest_agent.analysis_reservation
+            SET started_at = clock_timestamp() - interval '3 seconds',
+                expires_at = clock_timestamp() - interval '1 second'
+            WHERE id = :id
+        """), {"id": pending["id"]})
+    with store.project(winner_actor, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+        assert analyses.reconcile_expired(connection, caller, winner_draft["id"]) == 1
+        assert analyses.reconcile_expired(connection, caller, winner_draft["id"]) == 0
+        timed_out = analyses.settle_step(connection, caller, winner_draft["id"], pending["id"], Usage())
+        assert timed_out["outcome"] == "timeout" and timed_out["input_bytes"] == 10
+    unknown = reserve(operator, one, "ledger-step-00005", "blue")
+    with store.project(operator, *scope, Action.REQUEST_EVIDENCE) as (connection, caller):
+        charged = analyses.settle_step(connection, caller, one["id"], unknown["id"])
+        assert charged["outcome"] == "unknown" and charged["input_bytes"] == 10
+    with admin.begin() as connection:
+        connection.execute(text("""
+            UPDATE pentest_agent.analysis_reservation
+            SET started_at = clock_timestamp() - interval '121 seconds'
+            WHERE id = :id
+        """), {"id": first["id"]})
+    assert reserve(operator, one, "ledger-step-00006", "purple") == "analysis_deadline_elapsed"
+    await check_analysis_dispatch(admin, store, cipher, scope, users, queued, revoke_request, second_operator)
+
+    stop_path = f"/organizations/{org}/stop"
+    stop = (await call("GET", stop_path, "admin", 200)).json()
+    dispatch = PostgresDispatch(store, cipher, *scope, operator)
+    tools = frozenset({ToolId.SCOPE_RECORD_REVIEW})
+    stop_work = dispatch.start(stop_id, "white", "lifecycle-org-stop", tools, assisted=True, inference_available=True)
+    stop_proposal = generate_proposal(stop_work.prepared, inference.model, inference)
+    stopped = (await call("PUT", stop_path, "admin", 200, headers={"If-Match": f'"{stop["revision"]}"'},
+                          json={"enabled": True, "reason": "Pause ledger fixture"})).json()
+    stop_receipt = dispatch.finish(stop_id, "white", "lifecycle-org-stop", stop_work.reservation_id,
+                                   output=StepOutput(status="inconclusive"), failure=None, proposal=stop_proposal)
+    assert stop_receipt["state"] == "blocked" and stop_receipt["reason"] == "plan_state_changed"
+    assert_private_analysis_result(admin, stop_id, None, None)
+    assert reserve(operator, two, "ledger-step-00007") == "plan_state_changed"
+    await call("PUT", stop_path, "admin", 200, headers={"If-Match": f'"{stopped["revision"]}"'},
+               json={"enabled": False, "reason": "Close ledger fixture"})
+    assert reserve(operator, two, "ledger-step-00007") == "analysis_stop_changed"
+    current = (await call("GET", selection_url, "operator", 200, org=org)).json()
+    selected = (await call("PUT", selection_url, "admin", 200, org=org,
+                            headers={"If-Match": f'"{current["version"]}"'}, json={"mode_id": "rainbow"})).json()
+    mandate_request = request.model_copy(update={"selection_version": selected["version"]})
+    mandate_id = create(operator, mandate_request, "lifecycle-mandate-draft")["id"]
+    work = dispatch.start(mandate_id, "white", "lifecycle-stale-mandate", tools, assisted=True, inference_available=True)
+    return dispatch, mandate_id, work
+
+
+async def check_analysis_dispatch(admin, store, cipher, scope, users, drafts, revoke_request, other_operator):
+    port = PostgresDispatch(store, cipher, *scope, users["operator"])
+    tool = ToolId.SCOPE_RECORD_REVIEW
+    started, release = Event(), Event()
+    calls = []
+
+    def wait_and_observe(inputs):
+        assert store.engine.pool.checkedout() == 0
+        calls.append(inputs)
+        started.set()
+        if not release.wait(10):
+            raise RuntimeError("fixture handler timed out")
+        return StepOutput(status="observed", citations=(inputs[0].digest,))
+
+    assert port.state(drafts["normal"]) == "draft"
+    task = asyncio.create_task(asyncio.to_thread(
+        dispatch_step, port, {tool: wait_and_observe}, drafts["normal"], "white", "dispatcher-same-key"
+    ))
+    try:
+        assert await asyncio.to_thread(started.wait, 10)
+        assert port.state(drafts["normal"]) == "processing"
+        replay = dispatch_step(port, {tool: wait_and_observe}, drafts["normal"], "white", "dispatcher-same-key")
+        assert replay["state"] == "processing"
+        with pytest.raises(AccessError, match="idempotency_conflict"):
+            port.start(drafts["normal"], "red", "dispatcher-same-key", frozenset({tool}))
+    finally:
+        release.set()
+    complete = await task
+    assert complete["state"] == "completed" and len(calls) == 1
+    assert port.state(drafts["normal"]) == "ready"
+    assert dispatch_step(port, {}, drafts["normal"], "white", "dispatcher-same-key") == complete
+    assert calls[0][0].source.origin == "legacy"
+
+    unavailable = dispatch_step(port, {}, drafts["missing"], "white", "dispatcher-missing-key")
+    assert unavailable["reason"] == "analysis_capability_unavailable"
+    assert port.state(drafts["missing"]) == "blocked"
+    with admin.begin() as connection:
+        connection.execute(text("UPDATE pentest_agent.project SET state = 'archived' WHERE org_id = :org AND id = :project"),
+                           {"org": scope[0], "project": scope[1]})
+    try:
+        archived = dispatch_step(port, {tool: wait_and_observe}, drafts["archive"], "white", "dispatcher-archived-key")
+        assert archived["reason"] == "project_archived"
+    finally:
+        with admin.begin() as connection:
+            connection.execute(text("UPDATE pentest_agent.project SET state = 'active' WHERE org_id = :org AND id = :project"),
+                               {"org": scope[0], "project": scope[1]})
+    foreign = PostgresDispatch(store, cipher, *scope, other_operator)
+    with pytest.raises(AccessError, match="analysis_not_found"):
+        foreign.start(drafts["foreign"], "white", "dispatcher-foreign-key", frozenset({tool}))
+
+    def revoke_then_observe(inputs):
+        with store.project(users["approver"], *scope, Action.DECIDE_EVIDENCE) as (connection, caller):
+            evidence.decide(connection, caller, revoke_request.permission_id, 1, "revoke", "Revoked in fixture")
+        return StepOutput(status="observed", citations=(inputs[0].digest,))
+
+    revoked = dispatch_step(port, {tool: revoke_then_observe}, drafts["revoke"], "white", "dispatcher-revoke-key")
+    assert revoked["state"] == "blocked" and revoked["reason"] == "evidence_permission_inactive"
+    with admin.connect() as connection:
+        outcomes = connection.execute(text("""
+            SELECT analysis_id, output FROM pentest_agent.analysis_step_outcome WHERE analysis_id IN (:completed, :blocked)
+        """), {"completed": drafts["normal"], "blocked": drafts["revoke"]}).all()
+    assert dict(outcomes) == {
+        drafts["normal"]: {"status": "observed", "citations": [calls[0][0].digest]},
+        drafts["revoke"]: None,
+    }
+    work = port.start(drafts["timeout"], "white", "dispatcher-timeout-key", frozenset({tool}))
+    with admin.begin() as connection:
+        connection.execute(text("""
+            UPDATE pentest_agent.analysis_reservation
+            SET started_at = clock_timestamp() - interval '3 seconds',
+                expires_at = clock_timestamp() - interval '1 second'
+            WHERE id = :id
+        """), {"id": work.reservation_id})
+    timed_out = dispatch_step(port, {tool: wait_and_observe}, drafts["timeout"], "white", "dispatcher-timeout-key")
+    assert timed_out["state"] == "failed" and timed_out["reason"] == "analysis_step_timeout"
+    assert len(calls) == 1
+
+
+def assert_private_analysis_result(admin, analysis_id, status, proposal):
+    with admin.connect() as connection:
+        output, receipt = connection.execute(text("""
+            SELECT output, proposal_receipt FROM pentest_agent.analysis_step_outcome WHERE analysis_id = :id
+        """), {"id": analysis_id}).one()
+    assert (output["status"] if output else None) == status
+    assert (receipt["proposal"]["kind"] if receipt and receipt["proposal"] else None) == proposal
+    if proposal:
+        assert receipt["model"]["id"] == "postgres-fixture"
+        assert receipt["policy_version"] == "offline-proposals-v1"
+
+
+async def check_analysis_publication(call, admin, store, cipher, org, project, users, path, spec, source, payload, inference):
+    selection_url = path + "/team-selection"
+    previous = (await call("GET", selection_url, "operator", 200, org=org)).json()
+    selection = (await call("PUT", selection_url, "admin", 200, org=org,
+                            headers={"If-Match": f'"{previous["version"]}"'}, json={"mode_id": "white"})).json()
+    team = TEAM_CATALOG[TeamId.WHITE]
+    step = team.execution_order()[0]
+    digest = source["digest"]
+
+    async def prepare(label):
+        perm = (await call("POST", path + "/evidence-permissions", "operator", 201, org=org,
+                           headers={"Idempotency-Key": f"publication-perm-{label}"},
+                           json={**spec, "mode_id": team.id, "mode_version": team.version, "mode_digest": team.digest,
+                                 "allow_local_inference": True, "sources": [source]})).json()
+        permission = f"{path}/evidence-permissions/{perm['id']}"
+        await call("POST", permission + "/decisions", "approver", 200, org=org,
+                   json={"revision": 1, "decision": "approve", "reason": "Authorized fixture"})
+        upload = f"{permission}/revisions/1/sources/{digest}"
+        await call("PUT", upload, "operator", 200, org=org, headers={"Content-Type": "application/json"}, data=payload)
+        created = (await call("POST", path + "/analyses", "operator", 201, org=org,
+                              headers={"Idempotency-Key": f"publication-draft-{label}"},
+                              json={"permission_id": perm["id"], "permission_revision": 1,
+                                    "selection_version": selection["version"], "sources": [digest]})).json()
+        return f"{path}/analyses/{created['id']}", created["id"], upload
+
+    async def complete_run(route, label):
+        inference.body = json.dumps({"kind": "draft", "observation": {"control": "logging", "result": "observed"},
+                                     "citations": [digest]}).encode()
+        try:
+            receipt = (await call("POST", f"{route}/steps/{step}", "operator", 200, org=org,
+                                  headers={"Idempotency-Key": f"publication-advance-{label}"},
+                                  json={"strategy": "assisted"})).json()
+        finally:
+            inference.body = b'{"kind":"abstain"}'
+        assert receipt["state"] == "completed" and receipt["proposal_error"] is None
+
+    route, analysis_id, upload = await prepare("normal")
+    approval_reason = '<script>alert("x")</script> https://example.invalid/'
+    approval = {"decision": "approve", "reason": approval_reason}
+    rejection = {"decision": "reject", "reason": "Duplicate of the reviewed control"}
+    observation_url = f"{route}/review/decisions/{step}.observation"
+    draft_url = f"{route}/review/decisions/{step}.draft"
+    report_url = f"{route}/publication/report"
+    await call("GET", route + "/review", "approver", 409, org=org)
+    await complete_run(route, "normal")
+    await call("GET", route + "/review", "operator", 403, org=org)
+    await call("PUT", route + "/publication", "operator", 403, org=org)
+    await call("GET", route + "/review", "approver", 404, org=uuid4())
+    review = (await call("GET", route + "/review", "approver", 200, org=org)).json()
+    assert review["author_id"] == str(users["operator"])
+    assert [(item["id"], item["citations"]) for item in review["conclusions"]] == [
+        (f"{step}.observation", [digest]), (f"{step}.draft", [digest]),
+    ]
+    await call("PUT", route + "/publication", "approver", 409, org=org)
+    await call("PUT", observation_url, "approver", 200, org=org, json=rejection)
+    decision = (await call("PUT", draft_url, "approver", 200, org=org, json=approval)).json()
+    assert decision["reason"] == approval_reason and decision["actor_id"] == str(users["approver"])
+    assert (await call("PUT", draft_url, "approver", 200, org=org, json=approval)).json() == decision
+    await call("PUT", draft_url, "approver", 409, org=org, json=rejection)
+    membership = text("""
+        UPDATE pentest_agent.project_membership SET role_id = :role
+        WHERE org_id = :org AND project_id = :project AND user_id = :actor
+    """)
+    scope = {"org": org, "project": project, "actor": users["approver"]}
+    with admin.begin() as connection:
+        connection.execute(membership, {**scope, "role": "viewer"})
+        competing_publication = asyncio.create_task(call("PUT", route + "/publication", "approver", 403, org=org))
+        for _ in range(200):
+            if connection.scalar(text("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted)")):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("Publication did not wait on the in-flight membership change")
+    try:
+        assert (await competing_publication).json()["code"] == "permission_denied"
+    finally:
+        with admin.begin() as connection:
+            connection.execute(membership, {**scope, "role": "approver"})
+    first, second = await asyncio.gather(*[
+        call("PUT", route + "/publication", "approver", 200, org=org) for _ in range(2)
+    ])
+    assert first.json() == second.json()
+    assert first.json()["analysis_id"] == analysis_id
+    assert (await call("GET", route, "operator", 200, org=org)).json()["state"] == "published"
+    assert (await call("GET", route + "/review", "approver", 200, org=org)).json()["publication"] == first.json()
+    cancelled = await call("PUT", route + "/cancellation", "operator", 409, org=org)
+    assert cancelled.json()["code"] == "analysis_already_published"
+    report = await call("GET", report_url, "operator", 200, org=org)
+    assert report.content == (await call("GET", report_url, "approver", 200, org=org)).content
+    assert sha256(report.content).hexdigest() == first.json()["report_digest"]
+    assert "&lt;script&gt;" in report.text and "<script>" not in report.text
+    assert f"{step}.draft" in report.text and f"{step}.observation" not in report.text
+    assert "postgres-fixture" in report.text and digest in report.text and '<a href="https://example.invalid/' not in report.text
+    await call("GET", report_url, "viewer", 404, org=org)
+    other_reviewer = {**scope, "actor": users["admin"]}
+    with admin.begin() as connection:
+        connection.execute(membership, {**other_reviewer, "role": "approver"})
+    try:
+        await call("GET", route + "/review", "admin", 404, org=org)
+        await call("GET", report_url, "admin", 404, org=org)
+    finally:
+        with admin.begin() as connection:
+            connection.execute(membership, {**other_reviewer, "role": "project_admin"})
+    store.engine.dispose()
+    origin = "https://app.example"
+    restarted = build_app(RequestAuth(Authentication(EngagementProvider(), store), origin), store, cipher=cipher)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=restarted), base_url=origin) as client:
+        after_restart = await client.get(f"/api/v1{report_url}", params={"org_id": org},
+                                         headers={"Authorization": "Bearer operator"})
+    assert after_restart.status_code == 200 and report.content == after_restart.content
+
+    await call("PUT", upload + "/disposition", "approver", 200, org=org, json={"reason": "Withdraw dependency"})
+    await call("GET", report_url, "operator", 404, org=org)
+    await call("GET", report_url, "approver", 404, org=org)
+    await call("PUT", route + "/publication", "approver", 404, org=org)
+    with tenant_transaction(store.engine, org_id=UUID(org), project_id=UUID(project),
+                            user_id=users["operator"]) as connection:
+        assert connection.scalar(text("SELECT count(*) FROM pentest_agent.analysis_publication")) == 0
+
+    stale, stale_id, stale_upload = await prepare("withdrawn")
+    await complete_run(stale, "withdrawn")
+    for kind in ("observation", "draft"):
+        await call("PUT", f"{stale}/review/decisions/{step}.{kind}", "approver", 200, org=org, json=approval)
+    await call("PUT", stale_upload + "/disposition", "approver", 200, org=org, json={"reason": "Withdraw before publication"})
+    await call("PUT", stale + "/publication", "approver", 404, org=org)
+
+    foreign, foreign_id, _ = await prepare("foreign")
+    await complete_run(foreign, "foreign")
+    with admin.begin() as connection:
+        connection.execute(text("""
+            UPDATE pentest_agent.analysis_step_outcome
+              SET output = jsonb_build_object('status', 'observed', 'citations', jsonb_build_array(CAST(:digest AS text)))
+              WHERE analysis_id = :analysis_id
+        """), {"analysis_id": foreign_id, "digest": "c" * 64})
+    denied = await call("PUT", foreign + "/publication", "approver", 409, org=org)
+    assert denied.json()["code"] == "analysis_reference_invalid"
+    with admin.connect() as connection:
+        assert connection.scalar(text("SELECT count(*) FROM pentest_agent.analysis_publication WHERE analysis_id = :id"),
+                                 {"id": stale_id}) == 0
+
+
+async def check_analysis_api(call, admin, org, project, users, path, request, inference):
+    route = path + "/analyses"
+    body = request.model_dump(mode="json")
+
+    async def create(label):
+        return (await call("POST", route, "operator", 201, org=org, json=body,
+                           headers={"Idempotency-Key": f"lifecycle-create-{label}"})).json()
+
+    async def advance(analysis_id, key, status=200, strategy="assisted"):
+        return await call("POST", f"{route}/{analysis_id}/steps/white", "operator", status, org=org,
+                          headers={"Idempotency-Key": key}, json={"strategy": strategy})
+
+    async def read(analysis_id):
+        return (await call("GET", f"{route}/{analysis_id}", "operator", 200, org=org)).json()
+
+    async def expire(reservation_id):
+        with admin.begin() as connection:
+            connection.execute(text("""
+                UPDATE pentest_agent.analysis_reservation
+                SET started_at = clock_timestamp() - interval '3 seconds',
+                    expires_at = clock_timestamp() - interval '1 second'
+                WHERE id = :id
+            """), {"id": reservation_id})
+
+    await call("POST", route, "operator", 428, org=org, json=body)
+    item, replay = await asyncio.gather(create("one"), create("one"))
+    assert item == replay
+    analysis = item["id"]
+    assert (await read(analysis))["state"] == "draft"
+    await call("GET", f"{route}/{analysis}", "viewer", 403, org=org)
+    await call("GET", f"{route}/{analysis}", "operator", 404, org=uuid4())
+    await call("POST", f"{route}/{analysis}/steps/white", "operator", 422, org=org,
+               headers={"Idempotency-Key": "lifecycle-extra-param"}, json={"command": "fixture"})
+
+    async def pause_provider(analysis_id, label, concurrent_action, final_status=200):
+        started, release = Event(), Event()
+        key = f"lifecycle-advance-{label}"
+
+        def blocked():
+            started.set()
+            if not release.wait(8):
+                raise TimeoutError
+
+        inference.during_call = blocked
+        before = inference.calls
+        worker = asyncio.create_task(advance(analysis_id, key, final_status))
+        try:
+            assert await asyncio.to_thread(started.wait, 8)
+            await concurrent_action(key)
+        finally:
+            release.set()
+            try:
+                response = await worker
+            finally:
+                inference.during_call = None
+        assert inference.calls == before + 1
+        return response.json()
+
+    async def advance_twice(key):
+        assert (await read(analysis))["state"] == "processing"
+        assert (await advance(analysis, key)).json()["state"] == "processing"
+        assert (await advance(analysis, key, 409, strategy="deterministic")).json()["code"] == "idempotency_conflict"
+        assert (await advance(analysis, "lifecycle-competing-key", 409)).json()["code"] == "analysis_busy"
+
+    receipt = await pause_provider(analysis, "normal", advance_twice)
+    assert receipt["state"] == "completed"
+    assert (await advance(analysis, "lifecycle-advance-normal")).json() == receipt
+    detail = await read(analysis)
+    assert detail["state"] == "ready" and detail["snapshot_digest"] == item["snapshot_digest"]
+    assert detail["steps"] == [receipt]
+    assert "citations" not in json.dumps(detail)
+    assert_private_analysis_result(admin, analysis, "observed", "abstain")
+    with pytest.raises(DBAPIError) as private_receipt:
+        with tenant_transaction(inference.store.engine, org_id=UUID(org), project_id=UUID(project),
+                                user_id=users["operator"]) as connection:
+            connection.scalar(text("""
+                SELECT proposal_receipt FROM pentest_agent.analysis_step_outcome WHERE analysis_id = :analysis
+            """), {"analysis": analysis})
+    assert private_receipt.value.orig.sqlstate == "42501"
+
+    deterministic = (await create("deterministic"))["id"]
+    before = inference.calls
+    result = (await advance(deterministic, "lifecycle-advance-deterministic", strategy="deterministic")).json()
+    assert result["state"] == "completed" and result["proposal_error"] is None
+    assert inference.calls == before
+    assert_private_analysis_result(admin, deterministic, "observed", None)
+
+    missing_id = (await create("missing"))["id"]
+
+    def unavailable():
+        raise ProposalDependencyMissing
+
+    inference.during_call = unavailable
+    try:
+        missing = (await advance(missing_id, "lifecycle-advance-missing")).json()
+    finally:
+        inference.during_call = None
+    assert missing["state"] == "completed" and missing["proposal_error"] == "proposal_dependency_missing"
+    assert_private_analysis_result(admin, missing_id, "observed", None)
+
+    cancelled_id = (await create("cancel"))["id"]
+
+    async def cancel_while_running(_key):
+        url = f"{route}/{cancelled_id}/cancellation"
+        result = (await call("PUT", url, "operator", 200, org=org)).json()
+        assert (await call("PUT", url, "operator", 200, org=org)).json() == result
+        assert result["state"] == "cancelled"
+
+    cancelled = await pause_provider(cancelled_id, "cancel", cancel_while_running)
+    assert cancelled["reason"] == "analysis_cancelled"
+    assert (await advance(cancelled_id, "lifecycle-after-cancel", 409)).json()["code"] == "analysis_cancelled"
+    assert (await read(cancelled_id))["state"] == "cancelled"
+    assert_private_analysis_result(admin, cancelled_id, None, None)
+
+    elapsed_id = (await create("expired"))["id"]
+
+    async def expire_while_running(_key):
+        step = (await read(elapsed_id))["steps"][0]
+        await expire(step["reservation_id"])
+        state = await read(elapsed_id)
+        assert state["state"] == "failed" and state["steps"][0]["reason"] == "analysis_step_timeout"
+
+    elapsed = await pause_provider(elapsed_id, "expire", expire_while_running)
+    assert elapsed["reason"] == "analysis_step_timeout"
+    assert_private_analysis_result(admin, elapsed_id, None, None)
+
+    revoked_id = (await create("membership"))["id"]
+    membership = text("""
+        UPDATE pentest_agent.project_membership SET role_id = :role
+        WHERE org_id = :org AND project_id = :project AND user_id = :user
+    """)
+    scope = {"org": org, "project": project, "user": users["operator"]}
+    reservation_id = None
+
+    async def revoke_membership(_key):
+        nonlocal reservation_id
+        reservation_id = (await read(revoked_id))["steps"][0]["reservation_id"]
+        with admin.begin() as connection:
+            connection.execute(membership, {**scope, "role": "viewer"})
+
+    try:
+        revoked = await pause_provider(revoked_id, "membership", revoke_membership, final_status=403)
+        assert revoked["code"] == "permission_denied"
+    finally:
+        with admin.begin() as connection:
+            connection.execute(membership, {**scope, "role": "operator"})
+    await expire(reservation_id)
+    assert (await read(revoked_id))["state"] == "failed"
+    assert_private_analysis_result(admin, revoked_id, None, None)
 
 
 async def check_upload_admission(call, admin, runtime, org, other_org, project, operator, uploads):

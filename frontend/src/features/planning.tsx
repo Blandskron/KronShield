@@ -5,6 +5,8 @@ import { api, listOptions, type Models } from "../api";
 import { Button, Card } from "../ui";
 import { failure, Form, required, uuid } from "./forms";
 import { contextPath, options, type ViewContext, write } from "./administration";
+import { planLocation } from "./analysis-links";
+import { OfflineAnalysis } from "./offline-analysis";
 
 const statusText: Record<string, string> = {
   blocked: "Bloqueado", reviewed: "Revisado", allowed: "Dentro del alcance", excluded: "Excluido por regla",
@@ -79,13 +81,6 @@ export function AuthorizationForms({ ctx, records, complete, open }: {
   </div>;
 }
 
-export function planLocation(): { org: string; project: string; id: string } | null {
-  if (!location.hash.startsWith("#plan?")) return null;
-  const params = new URLSearchParams(location.hash.slice(6));
-  const org = params.get("org"), project = params.get("project"), id = params.get("id");
-  return org && project && id ? { org, project, id } : null;
-}
-
 export function quoteCommand(argv: string[], shell: "bash" | "powershell") {
   return (shell === "powershell" ? "& " : "") + argv.map((arg) => "'" +
     arg.replaceAll("'", shell === "powershell" ? "''" : "'\"'\"'") + "'").join(" ");
@@ -98,15 +93,17 @@ export function Planner({ ctx, frozen }: { ctx: ViewContext; frozen: boolean }) 
   const [verified, setVerified] = useState("");
   const root = "/projects/" + ctx.project;
   const params = { org_id: ctx.org };
-  const canCreate = !frozen && ctx.permissions.includes("assessments:manage");
+  const matching = selection?.org === ctx.org && selection.project === ctx.project;
+  const linkedWorkflow = Boolean(matching && (selection?.permission || selection?.analysis));
+  const canCreate = !linkedWorkflow && !frozen && ctx.permissions.includes("assessments:manage");
   const list = <T,>(segment: string) => ({ queryKey: ["planner", ctx.user, ctx.org, ctx.project, segment], enabled: canCreate,
     queryFn: ({ signal }: { signal: AbortSignal }) => listOptions<T>(root + "/" + segment, params, signal) });
   const assessments = useQuery(list<Models["Assessment"]>("assessments"));
   const authorizations = useQuery(list<Models["Authorization"]>("authorizations"));
   const targets = useQuery(list<Models["Target"]>("targets"));
-  const matching = selection?.org === ctx.org && selection.project === ctx.project;
-  const plan = useQuery({ queryKey: ["plan", ctx.user, ctx.org, ctx.project, selection?.id], enabled: Boolean(matching),
-    queryFn: ({ signal }) => api<Models["Plan"]>(contextPath(root + "/plans/" + selection?.id, ctx.org), { signal }) });
+  const plan = useQuery({ queryKey: ["plan", ctx.user, ctx.org, ctx.project, selection?.id],
+    enabled: Boolean(matching && selection?.id && !linkedWorkflow),
+    queryFn: ({ signal }) => api<Models["Plan"]>(contextPath(root + "/plans/" + encodeURIComponent(selection?.id ?? ""), ctx.org), { signal }) });
 
   const detail = plan.data;
   const args = detail ? [
@@ -121,9 +118,10 @@ export function Planner({ ctx, frozen }: { ctx: ViewContext; frozen: boolean }) 
     }
   };
 
-  return <div className="feature-grid">
-    {selection && !matching && <Card className="form-card"><p role="alert">El plan pertenece a un proyecto que no está seleccionado o no está disponible.</p></Card>}
-    {matching && plan.isPending && <p role="status">Cargando el plan…</p>}
+  const analysis = <OfflineAnalysis ctx={ctx} reference={selection} plan={!plan.isError ? detail : undefined} frozen={frozen} />;
+  return <div className="section-stack">{!linkedWorkflow && <div className="feature-grid">
+    {selection && !matching && <Card className="form-card"><p role="alert">El registro pertenece a un proyecto que no está seleccionado o no está disponible.</p></Card>}
+    {matching && selection?.id && plan.isPending && <p role="status">Cargando el plan…</p>}
     {plan.error && <Card className="form-card"><p role="alert">{failure(plan.error)}</p></Card>}
     {detail && <Card className="form-card plan-result"><h2>Plan {detail.id}</h2>
       <p role="status">{statusText[detail.status]}</p>
@@ -175,5 +173,7 @@ export function Planner({ ctx, frozen }: { ctx: ViewContext; frozen: boolean }) 
       {[targets.error, assessments.error, authorizations.error].some(Boolean) && <p role="alert">No se pudo cargar el inventario del plan.</p>}
     </div>}
     {!selection && !canCreate && <Card className="form-card"><p>Abre un enlace de plan de tu proyecto para consultarlo.</p></Card>}
+  </div>}
+    {analysis}
   </div>;
 }

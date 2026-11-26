@@ -1,0 +1,51 @@
+name: kronshield-local-inference
+
+services:
+  inference:
+    profiles: [local-inference]
+    image: ghcr.io/ggml-org/llama.cpp:server@sha256:b0cd5490eefff30b40dcd47f7249a7d7211136908f73fe440a2a86b35a22b23b
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        model=/models/qwen2.5-1.5b-instruct-q4_k_m.gguf
+        if ! printf '%s  %s\n' '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e' "$$model" | sha256sum -c --status; then
+          echo proposal_dependency_missing >&2
+          exit 1
+        fi
+        exec /app/llama-server --model "$$model" --host 0.0.0.0 --port 8080 \
+          --ctx-size 2048 --parallel 1 --threads 4 --n-gpu-layers 0 --timeout 12 \
+          --no-webui --no-agent --no-slots --no-cache-prompt --log-disable
+    user: "10001:10001"
+    networks: [inference]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2g
+    cpus: 4
+    volumes:
+      - type: bind
+        source: ${KRONSHIELD_MODEL_DIR:-./models}
+        target: /models
+        read_only: true
+        bind: { create_host_path: false }
+
+  inference-smoke:
+    profiles: [local-inference]
+    image: ${COMPOSE_PROJECT_NAME:-pentest-agent}-backend:local
+    pull_policy: never
+    build: { context: ., target: python }
+    command: ["python", "-m", "deploy.inference_smoke"]
+    networks: [inference]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ./deploy/inference_smoke.py
+        target: /app/deploy/inference_smoke.py
+        read_only: true
+        bind: { create_host_path: false }
+
+networks:
+  inference:
+    internal: true

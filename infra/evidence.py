@@ -120,8 +120,8 @@ def decide(connection: Connection, caller: ProjectAccess, permission_id: UUID, r
     return get_permission(connection, caller, permission_id)
 
 
-def _admit(connection: Connection, caller: ProjectAccess, permission_id: UUID, revision: int, digest: str,
-           purpose: str) -> tuple[evidence.Source, dict]:
+def admit_source(connection: Connection, caller: ProjectAccess, permission_id: UUID, revision: int, digest: str,
+                 purpose: str) -> tuple[evidence.Source, dict]:
     _lock(connection, caller, str(permission_id))
     current = get_permission(connection, caller, permission_id)
     if revision != current["revision"]:
@@ -167,7 +167,7 @@ def withdraw_source(connection: Connection, caller: ProjectAccess, permission_id
 
 def upload_source(connection: Connection, caller: ProjectAccess, permission_id: UUID, revision: int,
                   digest: str) -> evidence.Source:
-    source, _ = _admit(connection, caller, permission_id, revision, digest, "offline-review")
+    source, _ = admit_source(connection, caller, permission_id, revision, digest, "offline-review")
     if source.kind is not evidence.SourceKind.CONTROL_OBSERVATIONS:
         raise AccessError(422, "evidence_kind_mismatch")
     return source
@@ -205,7 +205,7 @@ def save_upload(connection: Connection, caller: ProjectAccess, cipher: DocumentC
 def analysis_context(connection: Connection, caller: ProjectAccess, cipher: DocumentCipher, permission_id: UUID,
                      revision: int, digest: str, *, for_local_inference: bool = False) -> dict:
     purpose = "local-inference" if for_local_inference else "offline-review"
-    source, snapshot = _admit(connection, caller, permission_id, revision, digest, purpose)
+    source, snapshot = admit_source(connection, caller, permission_id, revision, digest, purpose)
     if source.kind is evidence.SourceKind.LEGACY:
         content = evidence.project_legacy(source, _legacy(connection, source))
     else:

@@ -132,3 +132,76 @@ Comprueba que reaparezcan los recibos de retiro pertinentes y que reejecutar la 
 El administrador de la organización consulta `GET /api/v1/organizations/{org_id}/stop`. Para cambiar el estado, usa `PUT` sobre la misma ruta con el `ETag` recibido en `If-Match` y un cuerpo JSON con `enabled` y `reason`. Si otra decisión se registró primero, la API devuelve `412`. Consulta el estado vigente antes de decidir de nuevo.
 
 Al activarlo, la verificación de alcance bloquea los planes y la admisión de evidencia. Los usuarios con acceso pueden seguir leyendo los planes históricos. Cada transición confirmada registra la fecha, el actor, el motivo y una revisión independiente de la versión del inventario de la organización.
+
+## Presupuesto de análisis offline
+
+La fase C registra borradores internos con la revisión y el digest del plan, permiso, especialidad, fuentes y revisión del interruptor. El despachador usa el orden del manifiesto y un registro cerrado de funciones en memoria. El catálogo sigue pendiente de habilitación y las funciones de prueba operan sobre proyecciones sintéticas.
+
+| Límite piloto | Especialidad | Rainbow |
+|---|---:|---:|
+| Pasos reservados | 1 | 9 en total |
+| Entrada total | 1 MiB | 4 MiB |
+| Tiempo desde la primera reserva | 30 s | 120 s |
+| Solicitudes de inferencia | 1 | 6 en total |
+| Tokens de entrada / salida | 12.000 / 3.000 | 12.000 / 3.000 en total |
+
+El sistema admite una reserva vigente por análisis y dos por proyecto, incluso si pertenecen a operadores distintos. Cada reserva cuenta como un paso. Repetir la misma clave devuelve el recibo con `replayed=true`, que el despachador debe tratar como consulta. El recibo con medición conserva el uso observado. Si el uso es desconocido o vence la reserva, se contabiliza el máximo reservado. La conciliación registra el vencimiento de forma idempotente.
+
+Para medir estos límites en el piloto, registra el SHA, la versión de PostgreSQL, el número de sesiones concurrentes, el uso reservado y conciliado, y los rechazos por presupuesto, plazo o concurrencia. Compara la secuencia de eventos con los recibos antes de ajustar valores. El ensayo de capacidad con un proveedor se define en F03.
+
+El despachador comprueba el permiso y las fuentes al iniciar y al confirmar. La función recibe únicamente la proyección de su paso y se ejecuta fuera de la transacción. Una clave repetida consulta el recibo sin volver a invocar la función. La auditoría conserva el paso y el código de bloqueo o fallo. El flujo de revisión humana tendrá su propia autorización para consultar resultados.
+
+## API de análisis offline
+
+Las rutas de ciclo de vida bajo `/api/v1/projects/{project_id}/analyses` requieren `org_id`, autenticación y el permiso `evidence:request`. El resumen del análisis es visible para su autor mientras conserve la membresía de operador. La creación congela la selección de especialidad y su versión. Las respuestas exponen el estado, el hash del plan y los recibos de avance. El aprobador autorizado accede a las conclusiones desde las rutas de revisión.
+
+En el planificador, configura White Team en el proyecto y abre un plan revisado. Un operador puede solicitar permiso para un archivo JSON de observaciones de un activo propio dentro del alcance. Comparte el enlace del permiso con el aprobador, espera su decisión y vuelve a cargar exactamente el archivo registrado. Crea el análisis y avanza el siguiente paso. El modo determinista es el predeterminado y la inferencia local se ofrece con un permiso que la autorice.
+
+Comparte el enlace del análisis cuando aparezca **En espera de revisión**. El aprobador del permiso registra una decisión por conclusión y publica el informe desde el mismo planificador. Quien tenga acceso vigente a todas las fuentes puede descargarlo. Los enlaces permiten retomar el recorrido al recargar o volver a iniciar sesión. También puedes localizar un permiso o análisis por UUID en el planificador.
+
+| Método y recurso relativo | Comportamiento |
+|---|---|
+| `POST /` | Crea el borrador con la revisión aprobada del permiso de evidencia, la versión de selección y los digests autorizados. Requiere `Idempotency-Key`. |
+| `POST /{analysis_id}/steps/{step_id}` | Avanza únicamente el siguiente paso del manifiesto. Requiere `Idempotency-Key`. El cuerpo admite `strategy` con valor `deterministic` por defecto o `assisted`. Una repetición devuelve el recibo vigente del mismo paso y estrategia. |
+| `GET /{analysis_id}` | Consulta el resumen, el siguiente paso y el estado de publicación cuando el autor conserva acceso al informe. Si la reserva venció, registra el consumo reservado y el fallo una sola vez. |
+| `PUT /{analysis_id}/cancellation` | Cancela el análisis. Las repeticiones conservan la fecha original. Si hay un paso en curso, su resultado se descarta y se registra la reserva sin medir. |
+
+La capacidad disponible en C06 verifica registros de alcance. En modo asistido resulta aplicable el permiso adicional de inferencia local. El resultado del proveedor es una propuesta privada. Si el entorno se configuró para inferencia y el proveedor falla, se conserva el resultado determinista autorizado y se muestra `proposal_error`. Si el perfil está desactivado, solicitar `assisted` devuelve `503 proposal_dependency_missing` sin reservar el paso.
+
+Para habilitar la asistencia en el piloto, prepara los pesos como se indica en el ensayo de inferencia local y carga la superposición. Usa el mismo nombre de proyecto Compose de tu piloto con `-p` para reutilizar sus volúmenes. Este comando conecta la API y el servidor de inferencia a una red interna dedicada.
+
+```sh
+docker compose -p pentest-agent -f compose.yaml -f compose.inference.yaml -f compose.inference-api.yaml --profile local-inference up -d --build gateway inference
+```
+
+## Revisión y publicación de análisis
+
+Las rutas de revisión usan el mismo proyecto y `org_id` que las de análisis. El aprobador requiere `analyses:publish`, debe haber aprobado el permiso de evidencia y debe ser distinto del autor. Las conclusiones están disponibles al completar el flujo. Cada decisión conserva la identidad, el motivo y la fecha registrados por el servidor.
+
+| Método y recurso relativo a `/{analysis_id}` | Comportamiento |
+|---|---|
+| `GET /review` | Devuelve conclusiones con citas autorizadas, decisiones registradas y el recibo de publicación si existe. |
+| `PUT /review/decisions/{conclusion_id}` | Registra `approve` o `reject` y el motivo. Una repetición idéntica devuelve la decisión original. Un cambio posterior recibe un conflicto. |
+| `PUT /publication` | Requiere una decisión para cada conclusión. Guarda la instantánea de las conclusiones aprobadas, la procedencia y los bytes del HTML con su SHA-256. Una repetición devuelve el mismo recibo mientras siga vigente el permiso. |
+| `GET /publication/report` | Descarga el HTML para el autor o el aprobador con acceso vigente a todas las fuentes congeladas. La cabecera `ETag` contiene el SHA-256. |
+
+Una fuente retirada, vencida o ajena al permiso bloquea el acceso al artefacto completo. Las decisiones rechazadas quedan en el registro de revisión y el informe solo incluye su recuento. Los motivos y las referencias aparecen como texto escapado. El HTML se almacena al publicar para que sus bytes se mantengan estables tras reiniciar o actualizar la plantilla.
+
+## Ensayo de inferencia local
+
+`compose.inference.yaml` permite ensayar la inferencia de forma independiente. El adaptador se conecta a `http://inference:8080` en una red interna sin puertos publicados. El servidor se ejecuta como UID 10001, con el sistema de archivos y los pesos montados como solo lectura. Para conectar el servicio a la API del piloto se añade `compose.inference-api.yaml`. El despacho determinista sigue siendo el predeterminado.
+
+El servidor fijado es llama.cpp `1.0.0-dev`, build `12723`, revisión `abca69200` y licencia MIT. El digest de la imagen CPU está en Compose. El modelo es Qwen2.5-1.5B-Instruct GGUF Q4_K_M, con licencia Apache-2.0 y pesos de 1,12 GB. El contenedor comprueba su SHA-256 antes de iniciar. [Código del servidor](https://github.com/ggml-org/llama.cpp/tree/abca6920035ed77c1d80eaf23d066e9d3a7c5b23) · [Pesos y licencia del modelo](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/blob/dd26da440ef0330c47919d1ecae0966d24022222/qwen2.5-1.5b-instruct-q4_k_m.gguf)
+
+Para reproducir el ensayo, guarda el archivo `qwen2.5-1.5b-instruct-q4_k_m.gguf` en el directorio indicado por `KRONSHIELD_MODEL_DIR` (por defecto, `./models`). El SHA-256 esperado es `6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e`. Con Docker y Compose disponibles, ejecuta desde la raíz del repositorio:
+
+```sh
+docker compose -f compose.inference.yaml --profile local-inference build inference-smoke
+docker compose -f compose.inference.yaml --profile local-inference up -d --wait --wait-timeout 120 inference
+docker compose -f compose.inference.yaml --profile local-inference run --rm inference-smoke
+docker compose -f compose.inference.yaml --profile local-inference down
+```
+
+El ensayo usa únicamente una observación sintética y su digest. Las instrucciones van separadas del contexto. El cliente tokeniza antes de generar, aplica un plazo total de 12 s y valida la propuesta con C04. Con un directorio vacío, el servicio registra `proposal_dependency_missing` y termina. En ese caso, el cliente de ensayo puede comprobar el mismo estado con `run --rm inference-smoke python -m deploy.inference_smoke --missing`.
+
+El 25 de noviembre de 2026, Docker Desktop 4.99.0 ejecutó el ensayo en un Intel Core i7-1165G7, con 8 CPU lógicas y 15,5 GiB de RAM visibles en Linux. El perfil usó 4 hilos, un límite de 2 GiB, una única secuencia y 2.048 tokens de contexto. Las tres peticiones produjeron el mismo borrador admitido, con 213 tokens de entrada, 100 de salida y tiempos entre 6,46 y 6,91 s. Docker midió 775 MiB de memoria del contenedor después de la primera petición. La inspección confirmó el montaje de solo lectura, la red interna, la ausencia de ruta IPv4 por defecto y la ausencia de puertos publicados. Una conexión al servicio interno tuvo éxito y una conexión HTTPS a una IP externa devolvió `ENETUNREACH`.

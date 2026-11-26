@@ -34,6 +34,9 @@
 !frontend/tsconfig.json
 !frontend/src/
 !frontend/src/**
+!frontend/public/
+!frontend/public/licenses/
+!frontend/public/licenses/*.txt
 !frontend/tests/
 !frontend/tests/*.ts
 
