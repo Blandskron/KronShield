@@ -1,13 +1,13 @@
 """Policy and minimal projections for authorized offline evidence."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from application.access import AccessError, Action, ProjectAccess
 from domain.team_modes import TEAM_CATALOG, CapabilityStep, TeamId, TeamStep, ToolId
@@ -24,6 +24,7 @@ class EvidenceModel(BaseModel):
 
 class SourceKind(str, Enum):
     CONTROL_OBSERVATIONS = "control-observations-v1"
+    EVENT_BATCH = "event-batch-v1"
     LEGACY = "legacy-reference-v1"
 
 
@@ -49,6 +50,8 @@ class Source(EvidenceModel):
                 raise ValueError("Legacy evidence requires an existing import reference")
         elif self.size_bytes is None or self.legacy_id is not None:
             raise ValueError("Uploaded evidence requires its exact byte count")
+        if self.kind is SourceKind.EVENT_BATCH and self.capability is not ToolId.EVENT_REVIEW:
+            raise ValueError("Event batches require the event review capability")
         return self
 
 
@@ -144,17 +147,68 @@ class ControlObservations(EvidenceModel):
     observations: Annotated[tuple[ControlObservation, ...], Field(min_length=1, max_length=100)]
 
 
+def _utc(timestamp: datetime) -> datetime:
+    try:
+        return timestamp.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError("Timestamp is outside the supported UTC range") from None
+
+
+class TriageEvent(EvidenceModel):
+    event_id: UUID
+    occurred_at: AwareDatetime = Field(strict=True)
+    kind: Literal["login-success", "login-failure", "privilege-change", "configuration-change"]
+
+    @field_validator("occurred_at")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return _utc(value)
+
+
+class EventBatch(EvidenceModel):
+    target_id: UUID
+    producer: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,63}$")]
+    window_start: AwareDatetime = Field(strict=True)
+    window_end: AwareDatetime = Field(strict=True)
+    events: Annotated[tuple[TriageEvent, ...], Field(max_length=2000)]
+
+    @field_validator("window_start", "window_end")
+    @classmethod
+    def normalize_window(cls, value: datetime) -> datetime:
+        return _utc(value)
+
+    @model_validator(mode="after")
+    def check_window(self):
+        if not self.window_start < self.window_end:
+            raise ValueError("Expected a positive event window")
+        if len({event.event_id for event in self.events}) != len(self.events):
+            raise ValueError("Expected unique event IDs")
+        if any(not self.window_start <= event.occurred_at < self.window_end for event in self.events):
+            raise ValueError("Event is outside the batch window")
+        return self
+
+
+UPLOAD_MODELS = {
+    SourceKind.CONTROL_OBSERVATIONS: ControlObservations,
+    SourceKind.EVENT_BATCH: EventBatch,
+}
+
+
 def project_upload(source: Source, payload: bytes) -> dict:
-    if source.kind is not SourceKind.CONTROL_OBSERVATIONS:
+    model = UPLOAD_MODELS.get(source.kind)
+    if model is None:
         raise AccessError(422, "evidence_kind_mismatch")
     if len(payload) != source.size_bytes or sha256(payload).hexdigest() != source.digest:
         raise AccessError(422, "evidence_source_mismatch")
     try:
-        content = ControlObservations.model_validate_json(payload)
+        content = model.model_validate_json(payload)
     except ValidationError:
         raise AccessError(422, "invalid_evidence_source") from None
     if content.target_id != source.target_id:
         raise AccessError(422, "evidence_asset_not_allowed")
+    if isinstance(content, EventBatch):
+        ordered = tuple(sorted(content.events, key=lambda event: (event.occurred_at, event.event_id)))
+        content = content.model_copy(update={"events": ordered})
     return content.model_dump(mode="json")
 
 

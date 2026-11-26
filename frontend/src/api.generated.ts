@@ -2216,7 +2216,7 @@ export interface components {
          * SourceKind
          * @enum {string}
          */
-        SourceKind: "control-observations-v1" | "legacy-reference-v1";
+        SourceKind: "control-observations-v1" | "event-batch-v1" | "legacy-reference-v1";
         /** Target */
         Target: {
             /** Attribution */

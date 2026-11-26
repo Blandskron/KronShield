@@ -140,6 +140,81 @@ def test_projection_excludes_source_text_and_checks_digest_and_size(setup):
     }
 
 
+def event_batch_source(target, **changes):
+    batch = {
+        "target_id": target,
+        "producer": "identity-audit",
+        "window_start": "2026-01-01T11:00:00-03:00",
+        "window_end": "2026-01-01T12:00:00-03:00",
+        "events": [{"event_id": str(uuid4()), "occurred_at": "2026-01-01T11:10:00-03:00", "kind": "login-failure"}],
+        **changes,
+    }
+    payload = json.dumps(batch).encode()
+    source = evidence.Source(kind="event-batch-v1", capability="event-review", target_id=target,
+                             digest=sha256(payload).hexdigest(), size_bytes=len(payload), classification="internal")
+    return source, payload
+
+
+def test_event_projection_orders_events_by_utc_then_id(setup):
+    spec, _, _, _, _ = setup
+    target = spec["sources"][0]["target_id"]
+    first, second, third = sorted(str(uuid4()) for _ in range(3))
+    events = [
+        {"event_id": third, "occurred_at": "2026-01-01T10:45:00-04:00", "kind": "login-success"},
+        {"event_id": second, "occurred_at": "2026-01-01T11:10:00-03:00", "kind": "login-failure"},
+        {"event_id": first, "occurred_at": "2026-01-01T14:10:00Z", "kind": "privilege-change"},
+    ]
+    source, payload = event_batch_source(target, events=events)
+    projection = evidence.project_upload(source, payload)
+    reverse_source, reverse_payload = event_batch_source(target, events=list(reversed(events)))
+    assert evidence.project_upload(reverse_source, reverse_payload) == projection
+    assert projection["producer"] == "identity-audit"
+    assert projection["window_start"] == "2026-01-01T14:00:00Z"
+    assert projection["window_end"] == "2026-01-01T15:00:00Z"
+    assert [event["event_id"] for event in projection["events"]] == [first, second, third]
+    assert [event["occurred_at"] for event in projection["events"]] == ["2026-01-01T14:10:00Z"] * 2 + [
+        "2026-01-01T14:45:00Z"]
+    empty, raw = event_batch_source(target, events=[])
+    assert evidence.project_upload(empty, raw)["events"] == []
+
+
+@pytest.mark.parametrize("timestamp", ["invalid", "2026-01-01T14:10:00", 1767276600,
+                                       "2026-01-01T15:00:00Z", "0001-01-01T00:00:00+01:00"])
+def test_events_reject_invalid_or_outside_timestamps(setup, timestamp):
+    spec, _, _, _, _ = setup
+    source, raw = event_batch_source(spec["sources"][0]["target_id"], events=[
+        {"event_id": str(uuid4()), "occurred_at": timestamp, "kind": "login-failure"},
+    ])
+    with pytest.raises(AccessError, match="invalid_evidence_source"):
+        evidence.project_upload(source, raw)
+
+
+def test_event_batch_rejects_ambiguous_excess_and_mismatched_data(setup):
+    spec, plan, caller, _, _ = setup
+    target = spec["sources"][0]["target_id"]
+    source, raw = event_batch_source(target)
+    first_event = json.loads(raw)["events"][0]
+    for changes in ({"events": [first_event] * 2}, {"events": [first_event] * 2001},
+                    {"events": [{**first_event, "message": "unfiltered log"}]},
+                    {"producer": "https://example.test/untrusted"},
+                    {"window_end": "2026-01-01T14:00:00Z"}):
+        invalid_source, invalid_raw = event_batch_source(target, **changes)
+        with pytest.raises(AccessError, match="invalid_evidence_source"):
+            evidence.project_upload(invalid_source, invalid_raw)
+    with pytest.raises(AccessError, match="evidence_source_mismatch"):
+        evidence.project_upload(source, raw + b" ")
+    with pytest.raises(AccessError, match="evidence_asset_not_allowed"):
+        evidence.project_upload(source.model_copy(update={"target_id": uuid4()}), raw)
+    with pytest.raises(ValidationError):
+        evidence.Source.model_validate({**source.model_dump(mode="json"), "capability": "scope-record-review"})
+    mode = TEAM_CATALOG[TeamId.BLUE]
+    spec.update(mode_id=mode.id, mode_version=mode.version, mode_digest=mode.digest, sources=[source])
+    evidence.check_plan(evidence.PermissionSpec.model_validate(spec), plan, caller)
+    spec["sources"] = [source.model_copy(update={"target_id": uuid4()})]
+    with pytest.raises(AccessError, match="evidence_asset_not_allowed"):
+        evidence.check_plan(evidence.PermissionSpec.model_validate(spec), plan, caller)
+
+
 def test_cipher_binds_evidence_to_tenant_project_permission_and_id():
     cipher = DocumentCipher(b64encode(bytes(32)).decode())
     scope = (uuid4(), uuid4(), uuid4(), uuid4(), 1, "a" * 64)

@@ -168,7 +168,7 @@ def withdraw_source(connection: Connection, caller: ProjectAccess, permission_id
 def upload_source(connection: Connection, caller: ProjectAccess, permission_id: UUID, revision: int,
                   digest: str) -> evidence.Source:
     source, _ = admit_source(connection, caller, permission_id, revision, digest, "offline-review")
-    if source.kind is not evidence.SourceKind.CONTROL_OBSERVATIONS:
+    if source.kind not in evidence.UPLOAD_MODELS:
         raise AccessError(422, "evidence_kind_mismatch")
     return source
 

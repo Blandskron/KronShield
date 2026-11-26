@@ -151,6 +151,30 @@ Para medir estos límites en el piloto, registra el SHA, la versión de PostgreS
 
 El despachador comprueba el permiso y las fuentes al iniciar y al confirmar. La función recibe únicamente la proyección de su paso y se ejecuta fuera de la transacción. Una clave repetida consulta el recibo sin volver a invocar la función. La auditoría conserva el paso y el código de bloqueo o fallo. El flujo de revisión humana tendrá su propia autorización para consultar resultados.
 
+## Importar eventos de Blue Team
+
+La API de permisos de evidencia admite lotes JSON de eventos minimizados. En la solicitud usa `mode_id: "blue"` con la versión y el digest del catálogo. Declara la fuente con `kind: "event-batch-v1"`, `capability: "event-review"`, el UUID del activo, la clasificación, el SHA-256 y el tamaño exacto del archivo. Usa un activo propio permitido por el plan. Una vez aprobado el permiso, carga el archivo con `PUT /api/v1/projects/{project_id}/evidence-permissions/{permission_id}/revisions/{revision}/sources/{digest}`, `org_id` como parámetro de consulta y `Content-Type: application/json`.
+
+```json
+{
+  "target_id": "11111111-1111-4111-8111-111111111111",
+  "producer": "identity-audit",
+  "window_start": "2026-11-26T09:00:00-03:00",
+  "window_end": "2026-11-26T10:00:00-03:00",
+  "events": [
+    {
+      "event_id": "22222222-2222-4222-8222-222222222222",
+      "occurred_at": "2026-11-26T09:15:00-03:00",
+      "kind": "login-failure"
+    }
+  ]
+}
+```
+
+El lote admite hasta 1 MiB y 2.000 eventos con UUID distintos. Los tipos admitidos son `login-success`, `login-failure`, `privilege-change` y `configuration-change`. El productor se identifica con hasta 64 caracteres en minúsculas, dígitos y guiones, empezando por una letra. El identificador es declarado por quien exporta el lote. Las fechas requieren zona horaria y cada evento debe caer desde el inicio inclusive hasta el fin exclusivo de la ventana. La ventana describe el período observado y el permiso controla cuándo puede usarse la evidencia.
+
+La carga devuelve el digest del archivo original y el de la proyección cifrada. La proyección conserva el productor, normaliza las fechas a UTC y ordena por instante y UUID. Un lote con `events: []` conserva una ventana explícita sin eventos. El triaje por reglas y el flujo Blue del planificador siguen pendientes en D04.
+
 ## API de análisis offline
 
 Las rutas de ciclo de vida bajo `/api/v1/projects/{project_id}/analyses` requieren `org_id`, autenticación y el permiso `evidence:request`. El resumen del análisis es visible para su autor mientras conserve la membresía de operador. La creación congela la selección de especialidad y su versión. Las respuestas exponen el estado, el hash del plan y los recibos de avance. El aprobador autorizado accede a las conclusiones desde las rutas de revisión.

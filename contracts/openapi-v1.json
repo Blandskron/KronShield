@@ -3163,6 +3163,7 @@
       "SourceKind": {
         "enum": [
           "control-observations-v1",
+          "event-batch-v1",
           "legacy-reference-v1"
         ],
         "title": "SourceKind",

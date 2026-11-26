@@ -7,7 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-SCHEMA_REVISION = "0014_analysis_publication"
+SCHEMA_REVISION = "0015_event_batch_evidence"
 API_VERSION = "1.0.0"
 
 

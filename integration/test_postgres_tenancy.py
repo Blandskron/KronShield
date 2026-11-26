@@ -820,7 +820,37 @@ async def check_evidence_permissions(call, admin, store, cipher, org, other_org,
     upload_disposition = upload_path + "/disposition"
     expired = (await call("GET", upload_disposition, "operator", 200, org=org)).json()
     assert expired["kind"] == "expired" and expired["reason"] == "retention_elapsed"
+    await check_event_batch_upload(call, store, cipher, org, other_org, project, users, root, spec, target)
     return mandate_probe
+
+
+async def check_event_batch_upload(call, store, cipher, org, other_org, project, users, path, spec, target):
+    event = {"event_id": str(uuid4()), "occurred_at": "2026-01-01T11:00:00-03:00", "kind": "login-failure"}
+    batch = {"target_id": target, "producer": "identity-audit", "window_start": "2026-01-01T13:00:00Z",
+             "window_end": "2026-01-01T15:00:00Z", "events": [event]}
+    payload = json.dumps(batch).encode()
+    source = {"kind": "event-batch-v1", "capability": "event-review", "target_id": target,
+              "digest": sha256(payload).hexdigest(), "size_bytes": len(payload), "classification": "restricted"}
+    mode = TEAM_CATALOG[TeamId.BLUE]
+    receipt = (await call("POST", path, "operator", 201, org=org, headers={"Idempotency-Key": "blue-event-batch-request"},
+                          json={**spec, "mode_id": mode.id.value, "mode_digest": mode.digest,
+                                "mode_version": mode.version, "sources": [source]})).json()
+    permission_id = receipt["id"]
+    root = f"{path}/{permission_id}"
+    upload = f"{root}/revisions/1/sources/{source['digest']}"
+    headers = {"Content-Type": "application/json"}
+    await call("PUT", upload, "operator", 409, org=org, headers=headers, data=payload)
+    await call("POST", root + "/decisions", "approver", 200, org=org,
+               json={"revision": 1, "decision": "approve", "reason": "Collector verified"})
+    await call("PUT", upload, "operator", 404, org=other_org, headers=headers, data=payload)
+    stored = (await call("PUT", upload, "operator", 200, org=org, headers=headers, data=payload)).json()
+    assert (await call("PUT", upload, "operator", 200, org=org, headers=headers, data=payload)).json() == stored
+    for role in ("operator", "approver"):
+        with store.project(users[role], UUID(org), UUID(project), Action.READ) as (connection, caller):
+            context = analysis_context(connection, caller, cipher, UUID(permission_id), 1, source["digest"])
+            assert context["source"] == {**batch, "events": [{**event, "occurred_at": "2026-01-01T14:00:00Z"}]}
+    await call("PUT", upload + "/disposition", "approver", 200, org=org, json={"reason": "Withdraw event source"})
+    await call("PUT", upload, "operator", 409, org=org, headers=headers, data=payload)
 
 
 async def check_analysis_ledger(call, admin, store, cipher, org, project, users, path, base_spec, legacy, inference):
