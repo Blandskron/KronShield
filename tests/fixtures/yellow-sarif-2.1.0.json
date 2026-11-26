@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": { "driver": { "name": "fixture-ci", "version": "1.2.0" } },
+      "versionControlProvenance": [
+        {
+          "repositoryUri": "https://git.example.test/team/service.git",
+          "revisionId": "1111111111111111111111111111111111111111"
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "review.config.required",
+          "level": "warning",
+          "message": { "text": "Synthetic private message" },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/config.py" },
+                "region": { "startLine": 12, "endLine": 14 }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

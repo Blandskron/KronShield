@@ -822,7 +822,54 @@ async def check_evidence_permissions(call, admin, store, cipher, org, other_org,
     expired = (await call("GET", upload_disposition, "operator", 200, org=org)).json()
     assert expired["kind"] == "expired" and expired["reason"] == "retention_elapsed"
     await check_event_batch_upload(call, store, cipher, org, other_org, project, users, root, spec, target)
+    await check_sarif_upload(call, org, other_org, root, spec, target)
     return mandate_probe
+
+
+async def check_sarif_upload(call, org, other_org, root, spec, target):
+    fixture = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "yellow-sarif-2.1.0.json"
+    payload = fixture.read_bytes()
+    digest = sha256(payload).hexdigest()
+    provenance = {"producer": "fixture-ci", "producer_version": "1.2.0",
+                  "repository_uri": "https://git.example.test/team/service.git", "revision_id": "1" * 40}
+    source = {"kind": "sarif-v1", "target_id": target, "capability": "code-review", "classification": "internal",
+              "digest": digest, "size_bytes": len(payload), "sarif_provenance": provenance}
+    mode = TEAM_CATALOG[TeamId.YELLOW]
+    permission_spec = {**spec, "mode_id": mode.id.value, "mode_version": mode.version, "mode_digest": mode.digest,
+                       "sources": [source]}
+    headers = {"Content-Type": "application/sarif+json"}
+    approval = {"revision": 1, "decision": "approve", "reason": "Verified producer, revision and asset"}
+
+    async def request(source_data, key):
+        permit = (await call("POST", root, "operator", 201, org=org, headers={"Idempotency-Key": key},
+                             json={**permission_spec, "sources": [source_data]})).json()
+        return root + "/" + permit["id"]
+
+    mismatched = await request({**source, "sarif_provenance": {**provenance, "revision_id": "2" * 40}},
+                               "yellow-sarif-revision-mismatch")
+    await call("POST", mismatched + "/decisions", "approver", 200, org=org, json=approval)
+    refused = await call("PUT", mismatched + "/revisions/1/sources/" + digest, "operator", 422,
+                         org=org, headers=headers, data=payload)
+    assert refused.json()["code"] == "evidence_sarif_provenance_mismatch"
+
+    permission = await request(source, "yellow-sarif-custody-request")
+    upload = f"{permission}/revisions/1/sources/{digest}"
+    await call("PUT", upload, "operator", 409, org=org, headers=headers, data=payload)
+    await call("POST", permission + "/decisions", "approver", 200, org=org, json=approval)
+    await call("PUT", upload, "operator", 404, org=other_org, headers=headers, data=payload)
+    await call("PUT", upload, "operator", 413, org=org, headers=headers, data=payload + b" ")
+    stored = (await call("PUT", upload, "operator", 200, org=org, headers=headers, data=payload)).json()
+    assert (await call("PUT", upload, "operator", 200, org=org, headers=headers, data=payload)).json() == stored
+    projection_path = upload + "/sarif"
+    await call("GET", projection_path, "viewer", 404, org=org)
+    await call("GET", projection_path, "operator", 404, org=other_org)
+    for role in ("operator", "approver"):
+        projection = (await call("GET", projection_path, role, 200, org=org)).json()
+        assert projection == {"target_id": target, "sarif_version": "2.1.0", "provenance": provenance,
+                              "locations": [{"rule_id": "review.config.required", "path": "src/config.py",
+                                             "start_line": 12, "end_line": 14}]}
+    await call("PUT", upload + "/disposition", "approver", 200, org=org, json={"reason": "Withdraw SARIF evidence"})
+    await call("GET", projection_path, "operator", 409, org=org)
 
 
 async def check_event_batch_upload(call, store, cipher, org, other_org, project, users, path, spec, target):

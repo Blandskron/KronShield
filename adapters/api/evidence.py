@@ -13,7 +13,8 @@ from adapters.api.auth import RequestAuth, RequestIdentity
 from adapters.api.contract import Output
 from application.access import AccessError, Action
 from application.documents import DocumentCipher
-from application.evidence import Digest, EvidenceModel, PermissionSpec, Revision
+from application.evidence import Digest, EvidenceModel, PermissionSpec, Revision, SourceKind
+from application.sarif import SarifProjection
 from infra import evidence as data
 from infra.auth_store import PostgresAuthStore
 
@@ -113,14 +114,19 @@ def evidence_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Documen
             return data.save_upload(connection, caller, cipher, permission, revision, digest, payload)
 
     @router.put("/{permission_id}/revisions/{revision}/sources/{digest}", response_model=UploadReceipt,
-                openapi_extra={"requestBody": {"required": True, "content": {"application/json":
-                               {"schema": {"type": "string", "format": "binary"}}}}})
+                openapi_extra={"requestBody": {"required": True, "content": {
+                    media: {"schema": {"type": "string", "format": "binary"}}
+                    for media in ("application/json", "application/sarif+json")
+                }}})
     async def upload(identity: Caller, org_id: UUID, project_id: UUID, permission_id: UUID,
                      revision: Annotated[int, Path(ge=1, le=2147483647)], digest: Digest, request: Request) -> dict:
-        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        media = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if media not in {"application/json", "application/sarif+json"}:
             raise AccessError(415, "evidence_json_required")
         args = (identity.user_id, org_id, project_id, permission_id, revision, digest)
         source = await run_in_threadpool(upload_source, *args)
+        if media == "application/sarif+json" and source.kind is not SourceKind.SARIF:
+            raise AccessError(415, "evidence_json_required")
         payload = bytearray()
         async for chunk in request.stream():
             if len(payload) + len(chunk) > source.size_bytes:
@@ -130,6 +136,15 @@ def evidence_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Documen
 
     disposition = "/{permission_id}/revisions/{revision}/sources/{digest}/disposition"
     SourceRevision = Annotated[int, Path(ge=1, le=2147483647)]
+
+    @router.get("/{permission_id}/revisions/{revision}/sources/{digest}/sarif", response_model=SarifProjection)
+    def read_sarif(identity: Caller, org_id: UUID, project_id: UUID, permission_id: UUID,
+                   revision: SourceRevision, digest: Digest) -> dict:
+        with store.project(identity.user_id, org_id, project_id, Action.READ) as (connection, caller):
+            source = data.analysis_context(connection, caller, cipher, permission_id, revision, digest)["source"]
+            if "sarif_version" not in source:
+                raise AccessError(404, "evidence_not_found")
+            return source
 
     @router.get(disposition, response_model=DispositionReceipt)
     def read_disposition(identity: Caller, org_id: UUID, project_id: UUID, permission_id: UUID,

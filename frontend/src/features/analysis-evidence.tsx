@@ -11,6 +11,7 @@ const MAX_BYTES = 1024 * 1024;
 const BLUE_RULE = "identity-login-failure-v1";
 type Permission = Models["PermissionDetail"];
 type Source = Models["Source"];
+type UploadKind = Exclude<Source["kind"], "legacy-reference-v1">;
 
 export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models["Plan"] }) {
   const [target, setTarget] = useState("");
@@ -31,8 +32,10 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
     entry.manifest.id === chosen.mode_id && entry.manifest.version === chosen.mode_version);
   const blue = mode?.manifest.id === "blue";
   const purple = mode?.manifest.id === "purple";
+  const yellow = mode?.manifest.id === "yellow";
   const events = blue || purple;
-  const supported = events || mode?.manifest.id === "white";
+  const kind = yellow ? "sarif-v1" : events ? "event-batch-v1" : "control-observations-v1";
+  const supported = yellow || events || mode?.manifest.id === "white";
   const targets = plan.targets.filter((item) => item.attribution === "first_party" && item.reason === "allowed");
   const submit = useMutation({
     mutationFn: async () => {
@@ -54,13 +57,14 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
         }
         const validData = events ? Array.isArray(content?.events)
           : Array.isArray(content?.observations) && content.observations.length > 0;
-        if (content?.target_id !== target || !validData) {
+        if (!yellow && (content?.target_id !== target || !validData)) {
           throw new Error(events ? "El JSON debe incluir el UUID del activo seleccionado y la lista de eventos."
             : "El JSON debe incluir el UUID del activo seleccionado y sus observaciones.");
         }
-        sources.push({ digest: await sha256(raw), size_bytes: file.size, target_id: target, classification,
-          capability: events ? "event-review" : "scope-record-review",
-          kind: events ? "event-batch-v1" : "control-observations-v1" });
+        const provenance = yellow ? sarifProvenance(content) : undefined;
+        sources.push({ digest: await sha256(raw), size_bytes: file.size, target_id: target, classification, kind,
+          capability: yellow ? "code-review" : events ? "event-review" : "scope-record-review",
+          ...(provenance ? { sarif_provenance: provenance } : {}) });
       }
       if (new Set(sources.map(({ digest }) => digest)).size !== sources.length) {
         throw new Error("Selecciona archivos distintos.");
@@ -68,7 +72,7 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
       return createWithReceipt<Models["PermissionReceipt"]>(ctx, "evidence-permissions", {
         plan_id: plan.id, plan_hash: plan.hash, mode_id: mode.manifest.id, mode_version: mode.manifest.version,
         mode_digest: mode.digest, valid_from: plan.authorization.valid_from, valid_until: plan.authorization.valid_until,
-        purpose: "offline-review", allow_local_inference: !events && classification === "internal" && localInference,
+        purpose: "offline-review", allow_local_inference: !yellow && !events && classification === "internal" && localInference,
         sources,
       } satisfies Models["PermissionSpec"]);
     },
@@ -79,7 +83,7 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
     {catalog.isError || selection.isError ? <div className="offline-actions"><p role="alert">No se pudo cargar la especialidad.</p>
       <Button onClick={() => { void selection.refetch(); void catalog.refetch(); }}>Actualizar especialidad</Button></div>
       : catalog.isPending || selection.isPending ? <p role="status">Cargando requisitos…</p>
-      : !mode || !supported ? <p>Pide a un administrador que configure White Team, Blue Team o Purple Team.</p>
+      : !mode || !supported ? <p>Pide a un administrador que configure White Team, Blue Team, Purple Team o Yellow Team.</p>
       : !targets.length ? <p>El plan necesita un activo propio dentro del alcance.</p>
       : <form onSubmit={(event) => {
         event.preventDefault();
@@ -95,15 +99,16 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
           </select>
         </label>
         {target && <p>UUID del activo <code>{target}</code></p>}
-        <EvidenceFile label={purple ? "Archivos JSON de eventos" : events ? "Archivo JSON de eventos" : "Archivo JSON de observaciones"}
-          events={events} multiple={purple} onChange={setFiles} />
+        <EvidenceFile label={yellow ? "Informe SARIF" : purple ? "Archivos JSON de eventos"
+          : events ? "Archivo JSON de eventos" : "Archivo JSON de observaciones"}
+          kind={kind} multiple={purple} onChange={setFiles} />
         <label className="input-field">Clasificación
           <select value={classification} onChange={(event) =>
             setClassification(event.target.value === "restricted" ? "restricted" : "internal")}>
             <option value="internal">Interna</option><option value="restricted">Restringida</option>
           </select>
         </label>
-        {!events && classification === "internal" && <label className="check">
+        {!yellow && !events && classification === "internal" && <label className="check">
           <input type="checkbox" checked={localInference} onChange={(event) => setLocalInference(event.target.checked)} />
           Solicitar permiso de inferencia local
         </label>}
@@ -114,21 +119,42 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
   </Card>;
 }
 
-function EvidenceFile({ label, events, multiple = false, onChange }: {
-  label: string; events: boolean; multiple?: boolean; onChange: (files: File[]) => void;
+function sarifProvenance(content: {
+  version?: string;
+  runs?: { tool?: { driver?: { name?: string; version?: string } };
+    versionControlProvenance?: { repositoryUri?: string; revisionId?: string }[] }[];
+} | null): Models["SarifProvenance"] {
+  const run = content?.runs?.[0];
+  const driver = run?.tool?.driver;
+  const repository = run?.versionControlProvenance?.[0];
+  if (content?.version !== "2.1.0" || content.runs?.length !== 1 || run?.versionControlProvenance?.length !== 1 ||
+    !driver?.name || !driver.version || !repository?.repositoryUri || !repository.revisionId) {
+    throw new Error("Usa SARIF 2.1.0 con un productor versionado y una única revisión de repositorio.");
+  }
+  return { producer: driver.name, producer_version: driver.version,
+    repository_uri: repository.repositoryUri, revision_id: repository.revisionId };
+}
+
+function EvidenceFile({ label, kind, multiple = false, onChange }: {
+  label: string; kind: UploadKind; multiple?: boolean; onChange: (files: File[]) => void;
 }) {
   const id = useId();
+  const sarif = kind === "sarif-v1";
   return <div className="input-field"><label htmlFor={id}>{label}</label>
-    <input id={id} type="file" accept=".json,application/json" required multiple={multiple} aria-describedby={id + "-help"}
+    <input id={id} type="file" accept={sarif ? ".sarif,.json,application/sarif+json,application/json" : ".json,application/json"}
+      required multiple={multiple} aria-describedby={id + "-help"}
       onChange={(event) => onChange(Array.from(event.target.files ?? []))} />
-    <small className="field-help" id={id + "-help"}>{events
+    <small className="field-help" id={id + "-help"}>{sarif ? "Informe SARIF 2.1.0 preparado por CI."
+      : kind === "event-batch-v1"
       ? "JSON en UTF-8 con target_id, producer, window_start, window_end y events."
       : "JSON en UTF-8 con target_id y observations."} {multiple
       ? "Hasta 50 archivos de 1 MiB cada uno." : "Tamaño máximo de 1 MiB."}</small>
   </div>;
 }
 
-function UploadEvidence({ ctx, permission, source }: { ctx: ViewContext; permission: Permission; source: Source }) {
+function UploadEvidence({ ctx, permission, source }: {
+  ctx: ViewContext; permission: Permission; source: Source & { kind: UploadKind };
+}) {
   const [file, setFile] = useState<File>();
   const upload = useMutation({
     mutationFn: async () => {
@@ -139,17 +165,34 @@ function UploadEvidence({ ctx, permission, source }: { ctx: ViewContext; permiss
       return api<Models["UploadReceipt"]>(analysisPath(ctx,
         `evidence-permissions/${permission.id}/revisions/${permission.revision}/sources/${source.digest}`), {
         method: "PUT", body: file,
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": ctx.csrf },
+        headers: { "Content-Type": source.kind === "sarif-v1" ? "application/sarif+json" : "application/json",
+          "X-CSRF-Token": ctx.csrf },
       });
     },
   });
   return <form onSubmit={(event) => { event.preventDefault(); upload.mutate(); }}>
-    <EvidenceFile label="Cargar archivo autorizado" events={source.kind === "event-batch-v1"}
+    <EvidenceFile label="Cargar archivo autorizado" kind={source.kind}
       onChange={([next]) => { upload.reset(); setFile(next); }} />
     <Button type="submit" disabled={upload.isPending}>{upload.isPending ? "Cargando…" : "Cargar evidencia"}</Button>
     {upload.isSuccess && <p role="status">Evidencia cargada.</p>}
     {upload.error && <p role="alert">{analysisFailure(upload.error)}</p>}
   </form>;
+}
+
+function SarifLocations({ ctx, record, digest }: { ctx: ViewContext; record: Permission; digest: string }) {
+  const read = useMutation({ mutationFn: () => api<Models["SarifProjection"]>(analysisPath(ctx,
+    `evidence-permissions/${record.id}/revisions/${record.revision}/sources/${digest}/sarif`)) });
+  return <>
+    <Button onClick={() => { read.reset(); read.mutate(); }} disabled={read.isPending}>Consultar ubicaciones SARIF</Button>
+    {read.error && <p role="alert">{analysisFailure(read.error)}</p>}
+    {read.data && <>
+      <p>{read.data.locations.length} ubicaciones importadas.</p>
+      <ul>{read.data.locations.map((location, index) => <li key={index}>
+        <code>{location.rule_id}</code> · <code>{location.path}{location.start_line ? ":" + location.start_line : ""}
+          {location.end_line ? "–" + location.end_line : ""}</code>
+      </li>)}</ul>
+    </>}
+  </>;
 }
 
 export function EvidencePermission({ ctx, id, planId, frozen }: {
@@ -202,6 +245,7 @@ export function EvidencePermission({ ctx, id, planId, frozen }: {
   const current = !frozen && record.status === "approved" &&
     Date.parse(record.spec.valid_from) <= Date.now() && Date.now() < Date.parse(record.spec.valid_until);
   const owner = isEvidenceRequester(ctx, record);
+  const yellow = record.spec.mode_id === "yellow";
   const canDecide = !frozen && ctx.permissions.includes("evidence:decide") &&
     record.status !== "revoked" && record.requester_id !== ctx.user;
   return <div className="section-stack">
@@ -219,11 +263,20 @@ export function EvidencePermission({ ctx, id, planId, frozen }: {
         <summary>Fuente · {source.digest.slice(0, 12)} · {source.classification === "internal" ? "Interna" : "Restringida"}</summary>
         <p>SHA-256 <code>{source.digest}</code></p>
         <p>{source.kind === "legacy-reference-v1" ? "Referencia de importación"
-          : source.kind === "event-batch-v1" ? "Archivo de eventos JSON" : "Archivo de observaciones JSON"}</p>
+          : source.kind === "sarif-v1" ? "Informe SARIF" : source.kind === "event-batch-v1"
+            ? "Archivo de eventos JSON" : "Archivo de observaciones JSON"}</p>
+        {source.sarif_provenance && <dl>
+          <dt>Productor</dt><dd>{source.sarif_provenance.producer} {source.sarif_provenance.producer_version}</dd>
+          <dt>Repositorio</dt><dd><code>{source.sarif_provenance.repository_uri}</code></dd>
+          <dt>Revisión</dt><dd><code>{source.sarif_provenance.revision_id}</code></dd>
+        </dl>}
         {owner && current && source.kind !== "legacy-reference-v1" &&
-          <UploadEvidence key={record.revision + source.digest} ctx={ctx} permission={record} source={source} />}
+          <UploadEvidence key={record.revision + source.digest} ctx={ctx} permission={record}
+            source={{ ...source, kind: source.kind }} />}
+        {current && source.kind === "sarif-v1" && (owner || record.approver_id === ctx.user) &&
+          <SarifLocations key={`sarif-${record.revision}-${source.digest}`} ctx={ctx} record={record} digest={source.digest} />}
       </details>)}
-      {owner && current && <div className="offline-actions">
+      {owner && current && !yellow && <div className="offline-actions">
         {record.spec.sources.some((source) => source.kind !== "legacy-reference-v1") &&
           <p>Carga los archivos autorizados antes de crear el análisis.</p>}
         {record.spec.mode_id === "purple" && <label className="input-field">Escenario sintético de cobertura

@@ -214,6 +214,16 @@ El escenario admite entre 1 y 30 controles con identificadores y combinaciones d
 
 El denominador incluye solo los controles detectados o evaluados con datos completos, y la matriz muestra los SHA-256 de las fuentes por fila. El aprobador revisa y publica la matriz completa. La descarga requiere que las fuentes congeladas sigan vigentes.
 
+## Importar SARIF en Yellow Team
+
+Selecciona Yellow Team en el proyecto y abre un plan revisado. Elige un activo propio y el informe preparado en CI. KronShield presenta el productor y su versión, el repositorio y la revisión al aprobador. Revisa que correspondan al activo y al informe de CI antes de aprobar. Después, el solicitante carga los mismos bytes. Ambos actores pueden consultar las ubicaciones importadas mientras el permiso siga vigente. [Ejemplo sintético](../tests/fixtures/yellow-sarif-2.1.0.json)
+
+El perfil admite SARIF 2.1.0 en UTF-8, hasta 1 MiB, con una ejecución, un productor en `tool.driver`, una entrada en `versionControlProvenance` y hasta 500 resultados. El repositorio se identifica con una URI HTTPS y la revisión con un hash Git completo de 40 o 64 caracteres hexadecimales en minúscula. Cada resultado contiene `ruleId`, `message.text` y una única ubicación física con una ruta relativa ASCII. Se admiten `level` y una región opcional con `startLine` y `endLine`. El campo `$schema` es opcional y admite los identificadores fijados en el lector. [Especificación SARIF 2.1.0 de OASIS](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
+
+El lector rechaza rutas absolutas, segmentos de navegación, URI en ubicaciones, bases de URI, índices de artefactos, referencias externas y campos de correlación con otras revisiones. Trata la URI del repositorio y el identificador del esquema como texto. La proyección cifrada conserva la procedencia aprobada, los IDs de regla, las rutas y las líneas. Los mensajes se descartan tras validar el archivo.
+
+Por API, declara `kind: "sarif-v1"`, `capability: "code-review"` y `sarif_provenance` en la fuente del permiso, junto al activo, el tamaño y el SHA-256. Tras la aprobación, la misma ruta de carga admite `application/sarif+json` y `application/json`. Consulta la proyección con `GET /api/v1/projects/{project_id}/evidence-permissions/{permission_id}/revisions/{revision}/sources/{digest}/sarif` y el parámetro `org_id`. El permiso verifica la coincidencia de procedencia con lo aprobado. El mapeo de requisitos y el borrador de revisión corresponden a D07.
+
 ## API de análisis offline
 
 Las rutas de ciclo de vida bajo `/api/v1/projects/{project_id}/analyses` requieren `org_id`, autenticación y el permiso `evidence:request`. El resumen del análisis es visible para su autor mientras conserve la membresía de operador. La creación congela la selección de especialidad y su versión. Las respuestas exponen el estado, el hash del plan y los recibos de avance. El aprobador autorizado accede a las conclusiones desde las rutas de revisión.

@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const org = "11111111-1111-4111-8111-111111111111";
 const project = "22222222-2222-4222-8222-222222222222";
@@ -37,6 +38,12 @@ const secondEventFile = { ...eventFile, name: "eventos-2.json", buffer: Buffer.f
   target_id: target, producer: "identity-audit", window_start: "2026-11-25T17:00:00Z",
   window_end: "2026-11-25T18:00:00Z", events: [],
 })) };
+const sarifFile = {
+  name: "yellow.sarif", mimeType: "application/sarif+json",
+  buffer: readFileSync(new URL("../../tests/fixtures/yellow-sarif-2.1.0.json", import.meta.url)),
+};
+const sarifProvenance = { producer: "fixture-ci", producer_version: "1.2.0",
+  repository_uri: "https://git.example.test/team/service.git", revision_id: "1".repeat(40) };
 const coverageScenario = {
   scenario_id: "88888888-8888-4888-8888-888888888888", target_id: target,
   checks: [0, 1, 2].map((index) => ({
@@ -48,18 +55,20 @@ const coverageScenario = {
 function fixture(mode = "white") {
   const blue = mode === "blue";
   const purple = mode === "purple";
+  const yellow = mode === "yellow";
   const eventBased = blue || purple;
-  const step = purple ? "coverage-comparison" : blue ? "event-review" : "scope-record-review";
+  const step = yellow ? "code-review" : purple ? "coverage-comparison" : blue ? "event-review" : "scope-record-review";
   const conclusion = step + ".observation";
-  const payload = eventBased ? eventContent : content;
+  const payload = yellow ? sarifFile.buffer : eventBased ? eventContent : content;
   const sourceDigest = createHash("sha256").update(payload).digest("hex");
   const payloads = new Map([[sourceDigest, payload]]);
   if (purple) payloads.set(createHash("sha256").update(secondEventFile.buffer).digest("hex"), secondEventFile.buffer);
   const spec = { plan_id: plan, plan_hash: planHash, mode_id: mode, mode_version: 1, mode_digest: manifestDigest,
     valid_from: "2025-01-01T00:00:00Z", valid_until: "2030-01-01T00:00:00Z", purpose: "offline-review",
-    allow_local_inference: !eventBased, sources: [...payloads].map(([digest, raw]) => ({ target_id: target, classification: "internal",
-      capability: eventBased ? "event-review" : step, kind: eventBased ? "event-batch-v1" : "control-observations-v1",
-      digest, size_bytes: raw.length })) };
+    allow_local_inference: !yellow && !eventBased, sources: [...payloads].map(([digest, raw]) => ({ target_id: target, classification: "internal",
+      capability: eventBased ? "event-review" : step,
+      kind: yellow ? "sarif-v1" : eventBased ? "event-batch-v1" : "control-observations-v1",
+      digest, size_bytes: raw.length, ...(yellow ? { sarif_provenance: sarifProvenance } : {}) })) };
   let requested = false;
   let allowed = false;
   const uploaded = new Set<string>();
@@ -98,9 +107,9 @@ function fixture(mode = "white") {
       const resource = path.slice(project.length + "/projects//".length);
       if (["targets", "authorizations", "assessments"].includes(resource)) return list();
       if (resource === "team-selection") return json({ version: 8, selection: { mode_id: mode, mode_digest: manifestDigest, mode_version: 1 } });
-      if (resource === "team-modes") return json({ items: [{ digest: manifestDigest, eligible_for_analysis: true,
-        manifest: { id: mode, version: 1, label: purple ? "Purple Team" : blue ? "Blue Team" : "White Team",
-          inputs: [eventBased ? "Eventos minimizados" : "Plan con decisión de alcance"],
+      if (resource === "team-modes") return json({ items: [{ digest: manifestDigest, eligible_for_analysis: !yellow,
+        manifest: { id: mode, version: 1, label: yellow ? "Yellow Team" : purple ? "Purple Team" : blue ? "Blue Team" : "White Team",
+          inputs: [yellow ? "SARIF de CI" : eventBased ? "Eventos minimizados" : "Plan con decisión de alcance"],
           workflow: [{ id: step, kind: "capability", tool: step }] } }] });
       if (resource === "plans/" + plan) return json({ id: plan, hash: planHash, status: "reviewed", denials: [],
         authorization: { revision: 1, valid_from: spec.valid_from, valid_until: spec.valid_until },
@@ -122,11 +131,16 @@ function fixture(mode = "white") {
         return json({ status: "approved" });
       }
       const uploadPrefix = `evidence-permissions/${permission}/revisions/1/sources/`;
+      if (resource === uploadPrefix + sourceDigest + "/sarif") {
+        expect(yellow && uploaded.has(sourceDigest)).toBe(true);
+        return json({ target_id: target, sarif_version: "2.1.0", provenance: sarifProvenance,
+          locations: [{ rule_id: "review.config.required", path: "src/config.py", start_line: 12, end_line: 14 }] });
+      }
       if (resource.startsWith(uploadPrefix)) {
         const digest = resource.slice(uploadPrefix.length);
         expect(role).toBe("operator");
         expect(allowed).toBe(true);
-        expect(request.headers()["content-type"]).toBe("application/json");
+        expect(request.headers()["content-type"]).toBe(yellow ? "application/sarif+json" : "application/json");
         expect(request.postDataBuffer()).toEqual(payloads.get(digest));
         uploaded.add(digest);
         return json({ source_digest: digest });
@@ -391,6 +405,41 @@ test("Purple congela el escenario y muestra resultados y fuentes por control", a
     await expect(hit.getByText(createHash("sha256").update(eventContent).digest("hex"))).toBeVisible();
     await expect(matrix.getByText("No detectado", { exact: true })).toBeVisible();
     await expect(matrix.getByText("Sin datos suficientes", { exact: true })).toBeVisible();
+  } finally {
+    await reviewer.close();
+  }
+});
+
+test("Yellow conserva la procedencia aprobada y muestra ubicaciones como texto", async ({ page, browser }) => {
+  const scenario = fixture("yellow");
+  const reviewer = await browser.newPage();
+  try {
+    await scenario.install(page, "operator");
+    await scenario.install(reviewer, "approver");
+    await page.goto(link({ id: plan }));
+    await page.getByLabel("Activo autorizado").selectOption(target);
+    await page.getByLabel("Informe SARIF").setInputFiles(sarifFile);
+    await expect(page.getByLabel("Solicitar permiso de inferencia local")).toHaveCount(0);
+    await page.getByRole("button", { name: "Solicitar permiso", exact: true }).click();
+    await expect(page.getByText("En espera de aprobación del permiso.")).toBeVisible();
+    await reviewer.goto(link({ permission }));
+    await reviewer.getByText(/^Fuente ·/).click();
+    await expect(reviewer.getByText(sarifProvenance.revision_id, { exact: true })).toBeVisible();
+    await expect(reviewer.getByText("fixture-ci 1.2.0", { exact: true })).toBeVisible();
+    await expect(reviewer.getByRole("link", { name: sarifProvenance.repository_uri })).toHaveCount(0);
+    await reviewer.getByLabel("Decisión del permiso").selectOption("approve");
+    await reviewer.getByLabel("Motivo del permiso").fill("Evidencia revisada");
+    await reviewer.getByRole("button", { name: "Registrar decisión del permiso" }).click();
+    await expect(reviewer.getByText("Aprobado", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Actualizar permiso" }).click();
+    await page.getByText(/^Fuente ·/).click();
+    await page.getByLabel("Cargar archivo autorizado").setInputFiles(sarifFile);
+    await page.getByRole("button", { name: "Cargar evidencia" }).click();
+    await expect(page.getByText("Evidencia cargada.")).toBeVisible();
+    await page.getByRole("button", { name: "Consultar ubicaciones SARIF" }).click();
+    await expect(page.getByText("review.config.required", { exact: true })).toBeVisible();
+    await expect(page.getByText("src/config.py:12–14", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Crear análisis offline" })).toHaveCount(0);
   } finally {
     await reviewer.close();
   }

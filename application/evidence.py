@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from application import sarif
 from application.access import AccessError, Action, ProjectAccess
 from domain.team_modes import TEAM_CATALOG, CapabilityStep, TeamId, TeamStep, ToolId
 
@@ -25,6 +26,7 @@ class EvidenceModel(BaseModel):
 class SourceKind(str, Enum):
     CONTROL_OBSERVATIONS = "control-observations-v1"
     EVENT_BATCH = "event-batch-v1"
+    SARIF = "sarif-v1"
     LEGACY = "legacy-reference-v1"
 
 
@@ -42,6 +44,7 @@ class Source(EvidenceModel):
     capability: ToolId
     legacy_id: UUID | None = None
     retain_until: AwareDatetime | None = None
+    sarif_provenance: sarif.SarifProvenance | None = None
 
     @model_validator(mode="after")
     def check_reference(self):
@@ -52,6 +55,11 @@ class Source(EvidenceModel):
             raise ValueError("Uploaded evidence requires its exact byte count")
         if self.kind is SourceKind.EVENT_BATCH and self.capability is not ToolId.EVENT_REVIEW:
             raise ValueError("Event batches require the event review capability")
+        if self.kind is SourceKind.SARIF:
+            if self.sarif_provenance is None or self.capability is not ToolId.CODE_REVIEW:
+                raise ValueError("SARIF requires approved provenance and the code review capability")
+        elif self.sarif_provenance is not None:
+            raise ValueError("SARIF provenance is only applicable to SARIF evidence")
         return self
 
 
@@ -75,6 +83,8 @@ class PermissionSpec(EvidenceModel):
             raise ValueError("Expected unique source digests")
         if self.allow_local_inference and any(source.classification is Classification.RESTRICTED for source in self.sources):
             raise ValueError("Restricted evidence cannot be shared with inference")
+        if self.allow_local_inference and any(source.kind is SourceKind.SARIF for source in self.sources):
+            raise ValueError("SARIF evidence is only applicable to offline review")
         if any(source.retain_until is not None and not self.valid_from < source.retain_until <= self.valid_until
                for source in self.sources):
             raise ValueError("Retention must end within the permission window")
@@ -194,16 +204,26 @@ UPLOAD_MODELS = {
     SourceKind.CONTROL_OBSERVATIONS: ControlObservations,
     SourceKind.EVENT_BATCH: EventBatch,
 }
+UPLOAD_KINDS = frozenset((*UPLOAD_MODELS, SourceKind.SARIF))
 
 
 def project_upload(source: Source, payload: bytes) -> dict:
-    model = UPLOAD_MODELS.get(source.kind)
-    if model is None:
+    if source.kind not in UPLOAD_KINDS:
         raise AccessError(422, "evidence_kind_mismatch")
     if len(payload) != source.size_bytes or sha256(payload).hexdigest() != source.digest:
         raise AccessError(422, "evidence_source_mismatch")
+    if source.kind is SourceKind.SARIF:
+        try:
+            report = sarif.read_report(payload)
+            provenance = report.provenance()
+        except ValueError:
+            raise AccessError(422, "invalid_evidence_source") from None
+        if provenance != source.sarif_provenance:
+            raise AccessError(422, "evidence_sarif_provenance_mismatch")
+        return sarif.SarifProjection(target_id=source.target_id, provenance=provenance,
+                                     locations=sarif.locations(report)).model_dump(mode="json")
     try:
-        content = model.model_validate_json(payload)
+        content = UPLOAD_MODELS[source.kind].model_validate_json(payload)
     except ValidationError:
         raise AccessError(422, "invalid_evidence_source") from None
     if content.target_id != source.target_id:

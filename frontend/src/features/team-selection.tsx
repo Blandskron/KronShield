@@ -91,6 +91,7 @@ export function TeamSelection({ ctx, frozen }: { ctx: ViewContext; frozen: boole
             <summary>Ver capacidades de {preview.manifest.label}</summary>
             <p>{preview.manifest.purpose} · Versión {preview.manifest.version}</p>
             <p>{preview.manifest.id === "white" ? "Revisión de alcance disponible en el planificador."
+              : preview.manifest.id === "yellow" ? "Importación SARIF disponible en el planificador."
               : preview.eligible_for_analysis ? "Disponible para análisis" : "Análisis pendiente de habilitación"}</p>
             <h3>Entradas requeridas</h3>
             <ul>{preview.manifest.inputs.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul>

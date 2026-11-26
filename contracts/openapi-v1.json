@@ -3068,6 +3068,125 @@
         "title": "RuleEffect",
         "type": "string"
       },
+      "SarifLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_line": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Line"
+          },
+          "path": {
+            "maxLength": 240,
+            "pattern": "^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$",
+            "title": "Path",
+            "type": "string"
+          },
+          "rule_id": {
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*(/[A-Za-z0-9_.:-]+)*$",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Line"
+          }
+        },
+        "required": [
+          "rule_id",
+          "path",
+          "start_line",
+          "end_line"
+        ],
+        "title": "SarifLocation",
+        "type": "object"
+      },
+      "SarifProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "locations": {
+            "items": {
+              "$ref": "#/components/schemas/SarifLocation"
+            },
+            "maxItems": 500,
+            "title": "Locations",
+            "type": "array"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/SarifProvenance"
+          },
+          "sarif_version": {
+            "const": "2.1.0",
+            "default": "2.1.0",
+            "title": "Sarif Version",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_id",
+          "provenance",
+          "locations"
+        ],
+        "title": "SarifProjection",
+        "type": "object"
+      },
+      "SarifProvenance": {
+        "additionalProperties": false,
+        "properties": {
+          "producer": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_. -]{0,63}$",
+            "title": "Producer",
+            "type": "string"
+          },
+          "producer_version": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$",
+            "title": "Producer Version",
+            "type": "string"
+          },
+          "repository_uri": {
+            "maxLength": 300,
+            "pattern": "^https://[a-z0-9][a-z0-9.-]*(/[A-Za-z0-9_.-]+)+$",
+            "title": "Repository Uri",
+            "type": "string"
+          },
+          "revision_id": {
+            "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$",
+            "title": "Revision Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "producer",
+          "producer_version",
+          "repository_uri",
+          "revision_id"
+        ],
+        "title": "SarifProvenance",
+        "type": "object"
+      },
       "ScopeInput": {
         "additionalProperties": false,
         "properties": {
@@ -3364,6 +3483,16 @@
             ],
             "title": "Retain Until"
           },
+          "sarif_provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SarifProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "size_bytes": {
             "anyOf": [
               {
@@ -3397,6 +3526,7 @@
         "enum": [
           "control-observations-v1",
           "event-batch-v1",
+          "sarif-v1",
           "legacy-reference-v1"
         ],
         "title": "SourceKind",
@@ -12388,6 +12518,12 @@
                 "format": "binary",
                 "type": "string"
               }
+            },
+            "application/sarif+json": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
             }
           },
           "required": true
@@ -12885,6 +13021,187 @@
           }
         },
         "summary": "Withdraw"
+      }
+    },
+    "/api/v1/projects/{project_id}/evidence-permissions/{permission_id}/revisions/{revision}/sources/{digest}/sarif": {
+      "get": {
+        "operationId": "read_sarif_api_v1_projects__project_id__evidence_permissions__permission_id__revisions__revision__sources__digest__sarif_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "permission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Permission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "revision",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "digest",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Digest",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Org Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SarifProjection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "412": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "428": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Read Sarif"
       }
     },
     "/api/v1/projects/{project_id}/legacy-imports": {

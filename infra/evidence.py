@@ -69,6 +69,9 @@ def request_permission(connection: Connection, caller: ProjectAccess, spec: evid
                        key: str, permission_id: UUID | None = None, previous: int | None = None) -> dict:
     key_digest = sha256(key.encode("ascii")).hexdigest()
     spec_data = spec.model_dump(mode="json")
+    for source in spec_data["sources"]:
+        if source["sarif_provenance"] is None:
+            del source["sarif_provenance"]
     request_digest = fingerprint({"spec": spec_data, "previous": previous, "id": str(permission_id)})
     _lock(connection, caller, f"request/{caller.user_id}/{key_digest}")
     replay = connection.execute(text("""
@@ -168,7 +171,7 @@ def withdraw_source(connection: Connection, caller: ProjectAccess, permission_id
 def upload_source(connection: Connection, caller: ProjectAccess, permission_id: UUID, revision: int,
                   digest: str) -> evidence.Source:
     source, _ = admit_source(connection, caller, permission_id, revision, digest, "offline-review")
-    if source.kind not in evidence.UPLOAD_MODELS:
+    if source.kind not in evidence.UPLOAD_KINDS:
         raise AccessError(422, "evidence_kind_mismatch")
     return source
 

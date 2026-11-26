@@ -84,6 +84,8 @@ const explanations: Record<string, string> = {
   evidence_permission_not_found: "El permiso no está disponible para tu cuenta en este proyecto.",
   evidence_revision_changed: "Cambió la revisión del permiso. Actualiza el permiso antes de continuar.",
   evidence_purpose_denied: "El permiso no incluye el uso de esta evidencia para inferencia local.",
+  evidence_sarif_provenance_mismatch: "El productor, el repositorio o la revisión difieren del permiso aprobado.",
+  invalid_evidence_source: "El archivo no cumple el formato de evidencia autorizado.",
   plan_state_changed: "El mandato o el alcance del plan cambió.",
   project_archived: "El proyecto está archivado.",
   proposal_dependency_missing: "El proveedor de inferencia local no está disponible.",

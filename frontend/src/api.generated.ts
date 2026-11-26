@@ -732,6 +732,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/evidence-permissions/{permission_id}/revisions/{revision}/sources/{digest}/sarif": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Sarif */
+        get: operations["read_sarif_api_v1_projects__project_id__evidence_permissions__permission_id__revisions__revision__sources__digest__sarif_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/legacy-imports": {
         parameters: {
             query?: never;
@@ -2208,6 +2225,45 @@ export interface components {
          * @enum {string}
          */
         RuleEffect: "allow" | "deny";
+        /** SarifLocation */
+        SarifLocation: {
+            /** End Line */
+            end_line: number | null;
+            /** Path */
+            path: string;
+            /** Rule Id */
+            rule_id: string;
+            /** Start Line */
+            start_line: number | null;
+        };
+        /** SarifProjection */
+        SarifProjection: {
+            /** Locations */
+            locations: components["schemas"]["SarifLocation"][];
+            provenance: components["schemas"]["SarifProvenance"];
+            /**
+             * Sarif Version
+             * @default 2.1.0
+             * @constant
+             */
+            sarif_version: "2.1.0";
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /** SarifProvenance */
+        SarifProvenance: {
+            /** Producer */
+            producer: string;
+            /** Producer Version */
+            producer_version: string;
+            /** Repository Uri */
+            repository_uri: string;
+            /** Revision Id */
+            revision_id: string;
+        };
         /** ScopeInput */
         ScopeInput: {
             /** Destination */
@@ -2302,6 +2358,7 @@ export interface components {
             legacy_id?: string | null;
             /** Retain Until */
             retain_until?: string | null;
+            sarif_provenance?: components["schemas"]["SarifProvenance"] | null;
             /** Size Bytes */
             size_bytes?: number | null;
             /**
@@ -2314,7 +2371,7 @@ export interface components {
          * SourceKind
          * @enum {string}
          */
-        SourceKind: "control-observations-v1" | "event-batch-v1" | "legacy-reference-v1";
+        SourceKind: "control-observations-v1" | "event-batch-v1" | "sarif-v1" | "legacy-reference-v1";
         /** Target */
         Target: {
             /** Attribution */
@@ -9111,6 +9168,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": string;
+                "application/sarif+json": string;
             };
         };
         responses: {
@@ -9377,6 +9435,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DispositionReceipt"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Precondition Failed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Precondition Required */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    read_sarif_api_v1_projects__project_id__evidence_permissions__permission_id__revisions__revision__sources__digest__sarif_get: {
+        parameters: {
+            query: {
+                org_id: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+                permission_id: string;
+                revision: number;
+                digest: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SarifProjection"];
                 };
             };
             /** @description Bad Request */
