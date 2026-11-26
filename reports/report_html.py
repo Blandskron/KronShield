@@ -224,7 +224,19 @@ def render_analysis_report(publication: dict) -> str:
                 ("Modelo", proof["model"]["id"]), ("SHA-256 del modelo", proof["model"]["digest"]),
             ))
         body.append(f"<h3>{escape(item['id'])}</h3><dl>{fields(conclusion)}</dl>")
-        if evidence:
+        if matrix := item.get("coverage"):
+            body.append("<h4>Cobertura de detección</h4><dl>" + fields((
+                ("Escenario", matrix["scenario_id"]), ("Activo", matrix["target_id"]),
+                ("Controles detectados", matrix["detected"]), ("Controles evaluados", matrix["evaluated"]),
+            )) + "</dl>")
+            labels = {"detected": "Detectado", "not_detected": "No detectado", "no_data": "Sin datos suficientes"}
+            for row in matrix["rows"]:
+                body.append(f"<h5>{escape(row['control_id'])}</h5><dl>" + fields((
+                    ("Estado", labels[row["status"]]), ("Regla", row["rule_id"]),
+                    ("Desde", row["window_start"]), ("Hasta", row["window_end"]),
+                    ("SHA-256 de la evidencia", ", ".join(row["citations"]) or "Sin fuentes"),
+                )) + "</dl>")
+        if evidence and not matrix:
             body.append(f"<h4>Referencias de evidencia</h4><ul>{evidence}</ul>")
     return _document(publication["analysis_id"], "\n".join(body), heading="Informe de análisis offline",
                      subject_label="Análisis", title="Análisis offline")

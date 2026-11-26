@@ -31,7 +31,9 @@ def test_catalog_contains_all_modes_as_pending_metadata():
     assert set(TEAM_CATALOG) == set(TeamId)
     assert len(TEAM_CATALOG) == 10
     assert all(mode.status == "pending" for mode in TEAM_CATALOG.values())
-    assert {mode.id for mode in TEAM_CATALOG.values() if mode.eligible_for_analysis} == {TeamId.WHITE, TeamId.BLUE}
+    assert {mode.id for mode in TEAM_CATALOG.values() if mode.eligible_for_analysis} == {
+        TeamId.WHITE, TeamId.BLUE, TeamId.PURPLE,
+    }
     rainbow = TEAM_CATALOG[TeamId.RAINBOW]
     assert rainbow.execution_order() == (
         "white", "red", "blue", "yellow", "black", "purple", "orange", "green", "gold",

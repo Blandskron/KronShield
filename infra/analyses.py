@@ -94,9 +94,17 @@ def create_draft(connection: Connection, caller: ProjectAccess, cipher: Document
         raise AccessError(409, "analysis_manifest_changed")
     if request.event_rule is not None and mode.id is not TeamId.BLUE:
         raise AccessError(422, "analysis_event_rule_not_applicable")
+    scenario = request.coverage_scenario
+    if mode.id is TeamId.PURPLE and scenario is None:
+        raise AccessError(422, "analysis_coverage_scenario_required")
+    if mode.id is not TeamId.PURPLE and scenario is not None:
+        raise AccessError(422, "analysis_coverage_scenario_not_applicable")
     sources = []
     for digest in sorted(request.sources):
         context = analysis_context(connection, caller, cipher, request.permission_id, request.permission_revision, digest)
+        if scenario is not None and (context["scope"]["target_id"] != str(scenario.target_id)
+                                     or context["capability"] != "event-review" or "events" not in context["source"]):
+            raise AccessError(422, "analysis_coverage_source_mismatch")
         sources.append({"digest": digest, "context_digest": fingerprint(context),
                         "capability": context["capability"], "classification": context["classification"]})
     permission = get_permission(connection, caller, request.permission_id, request.permission_revision)
@@ -115,6 +123,8 @@ def create_draft(connection: Connection, caller: ProjectAccess, cipher: Document
     }
     if mode.id is TeamId.BLUE:
         snapshot["event_rule"] = request.event_rule or DEFAULT_EVENT_RULE
+    if scenario is not None:
+        snapshot["coverage_scenario"] = scenario.model_dump(mode="json")
     analysis_id = uuid4()
     connection.execute(text("""
         INSERT INTO pentest_agent.offline_analysis (

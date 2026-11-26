@@ -13,7 +13,9 @@ from adapters.api.contract import Output
 from adapters.api.evidence import IdempotencyKey, required_idempotency_key
 from application.access import Action
 from application.analyses import AnalysisDraft
-from application.analysis_dispatch import EventTriage, OfflineInput, StepOutput, dispatch_step, event_review
+from application.analysis_dispatch import (
+    CoverageMatrix, EventTriage, OfflineInput, StepOutput, StepWork, coverage_review, dispatch_step, event_review,
+)
 from application.analysis_proposals import ModelVersion, ProposalProvider, generate_proposal
 from application.documents import DocumentCipher
 from application.evidence import ControlObservation, Digest, EvidenceModel, Revision
@@ -32,7 +34,17 @@ def review_scope(inputs: tuple[OfflineInput, ...]) -> StepOutput:
     return StepOutput(status="observed", citations=tuple(item.digest for item in inputs))
 
 
-DETERMINISTIC = {ToolId.SCOPE_RECORD_REVIEW: review_scope, ToolId.EVENT_REVIEW: event_review}
+def review_coverage(work: StepWork) -> StepOutput:
+    if work.coverage_scenario is None:
+        raise ValueError("A coverage scenario is required")
+    return coverage_review(work.inputs, work.coverage_scenario)
+
+
+DETERMINISTIC = {
+    ToolId.SCOPE_RECORD_REVIEW: lambda work: review_scope(work.inputs),
+    ToolId.EVENT_REVIEW: lambda work: event_review(work.inputs),
+    ToolId.COVERAGE_COMPARISON: review_coverage,
+}
 
 
 class AnalysisAdvance(EvidenceModel):
@@ -105,6 +117,7 @@ class AnalysisConclusion(Output):
     citations: list[Digest]
     observation: ControlObservation | None
     triage: EventTriage | None = None
+    coverage: CoverageMatrix | None = None
     provenance: AnalysisProvenance
 
 

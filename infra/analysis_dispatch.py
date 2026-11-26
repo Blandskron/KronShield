@@ -8,8 +8,10 @@ from uuid import UUID
 from sqlalchemy import Connection, text
 
 from application.access import AccessError, Action, ProjectAccess
-from application.analyses import DEFAULT_EVENT_RULE, Usage
-from application.analysis_dispatch import OfflineInput, StepOutput, StepWork, event_review, next_tool, validate_output
+from application.analyses import Usage
+from application.analysis_dispatch import (
+    OfflineInput, StepOutput, StepWork, check_capability_result, next_tool, require_coverage_scenario, uses_evidence, validate_output,
+)
 from application.analysis_proposals import PreparedProposal, ProposalReceipt, prepare_proposal
 from application.documents import DocumentCipher
 from application.evidence import projection_bytes
@@ -205,7 +207,7 @@ class PostgresDispatch:
                                        for_local_inference=for_local_inference)
             if fingerprint(context) != source["context_digest"]:
                 raise AccessError(409, "analysis_context_changed")
-            if context["capability"] == tool:
+            if uses_evidence(tool, context["capability"]):
                 inputs.append(OfflineInput(digest=source["digest"], scope=context["scope"], source=context["source"]))
         if organization_stop(connection, caller.org_id)["revision"] != snapshot["stop_revision"]:
             raise AccessError(409, "analysis_stop_changed")
@@ -244,11 +246,14 @@ class PostgresDispatch:
             tool = next_tool(snapshot, completed, step_id)
             if assisted and tool is ToolId.EVENT_REVIEW:
                 raise AccessError(422, "analysis_event_review_deterministic")
+            if assisted and tool is ToolId.COVERAGE_COMPARISON:
+                raise AccessError(422, "analysis_coverage_deterministic")
             if assisted and tool in available and not inference_available:
                 raise AccessError(503, "proposal_dependency_missing")
             try:
                 if tool not in available:
                     raise AccessError(409, "analysis_capability_unavailable")
+                scenario = require_coverage_scenario(snapshot) if tool is ToolId.COVERAGE_COMPARISON else None
                 inputs = self._inputs(connection, caller, snapshot, tool)
                 input_bytes = len(projection_bytes([item.model_dump(mode="json") for item in inputs]))
                 prepared = None
@@ -269,7 +274,7 @@ class PostgresDispatch:
                 return _record(connection, values, "failed", "analysis_snapshot_invalid")
             if prepared is not None:
                 return AssistedWork(reservation["id"], tool, inputs, prepared)
-            return StepWork(reservation["id"], tool, inputs)
+            return StepWork(reservation["id"], tool, inputs, coverage_scenario=scenario)
 
     def finish(self, analysis_id: UUID, step_id: str, key: str, reservation_id: UUID, *,
                output: StepOutput | None, failure: str | None, proposal: ProposalReceipt | None = None) -> dict:
@@ -303,11 +308,7 @@ class PostgresDispatch:
             if output is not None:
                 try:
                     output = validate_output(output, inputs)
-                    if tool is ToolId.EVENT_REVIEW:
-                        if output != event_review(inputs, snapshot.get("event_rule", DEFAULT_EVENT_RULE)):
-                            raise ValueError("Event result does not match the frozen rule and inputs")
-                    elif output.triage is not None or output.status == "missing":
-                        raise ValueError("Event result is not applicable to this capability")
+                    check_capability_result(tool, snapshot, output, inputs)
                 except ValueError:
                     failure = "analysis_output_invalid"
             measured = None

@@ -99,6 +99,8 @@ def check_plan(spec: PermissionSpec, plan: dict, caller: ProjectAccess) -> None:
         raise AccessError(409, "evidence_mode_changed")
     stages = (TEAM_CATALOG[step.team] for step in mode.workflow if isinstance(step, TeamStep))
     tools = {step.tool for stage in (mode, *stages) for step in stage.workflow if isinstance(step, CapabilityStep)}
+    if mode.id is TeamId.PURPLE:
+        tools.add(ToolId.EVENT_REVIEW)
     if any(source.capability not in tools for source in spec.sources):
         raise AccessError(422, "evidence_capability_not_allowed")
 
@@ -147,7 +149,7 @@ class ControlObservations(EvidenceModel):
     observations: Annotated[tuple[ControlObservation, ...], Field(min_length=1, max_length=100)]
 
 
-def _utc(timestamp: datetime) -> datetime:
+def normalize_utc(timestamp: datetime) -> datetime:
     try:
         return timestamp.astimezone(timezone.utc)
     except OverflowError:
@@ -162,7 +164,7 @@ class TriageEvent(EvidenceModel):
     @field_validator("occurred_at")
     @classmethod
     def normalize_timestamp(cls, value: datetime) -> datetime:
-        return _utc(value)
+        return normalize_utc(value)
 
 
 class EventBatch(EvidenceModel):
@@ -175,7 +177,7 @@ class EventBatch(EvidenceModel):
     @field_validator("window_start", "window_end")
     @classmethod
     def normalize_window(cls, value: datetime) -> datetime:
-        return _utc(value)
+        return normalize_utc(value)
 
     @model_validator(mode="after")
     def check_window(self):

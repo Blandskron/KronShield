@@ -33,20 +33,36 @@ const eventContent = Buffer.from(JSON.stringify({
   target_id: target, producer: "identity-audit", window_start: now, window_end: "2026-11-25T17:00:00Z", events: [],
 }));
 const eventFile = { name: "eventos.json", mimeType: "application/json", buffer: eventContent };
+const secondEventFile = { ...eventFile, name: "eventos-2.json", buffer: Buffer.from(JSON.stringify({
+  target_id: target, producer: "identity-audit", window_start: "2026-11-25T17:00:00Z",
+  window_end: "2026-11-25T18:00:00Z", events: [],
+})) };
+const coverageScenario = {
+  scenario_id: "88888888-8888-4888-8888-888888888888", target_id: target,
+  checks: [0, 1, 2].map((index) => ({
+    control_id: ["hit", "negative", "gap"][index], rule_id: blueRule,
+    window_start: `2026-11-25T1${index + 5}:00:00Z`, window_end: `2026-11-25T1${index + 6}:00:00Z`,
+  })),
+};
 
 function fixture(mode = "white") {
   const blue = mode === "blue";
-  const step = blue ? "event-review" : "scope-record-review";
+  const purple = mode === "purple";
+  const eventBased = blue || purple;
+  const step = purple ? "coverage-comparison" : blue ? "event-review" : "scope-record-review";
   const conclusion = step + ".observation";
-  const payload = blue ? eventContent : content;
+  const payload = eventBased ? eventContent : content;
   const sourceDigest = createHash("sha256").update(payload).digest("hex");
+  const payloads = new Map([[sourceDigest, payload]]);
+  if (purple) payloads.set(createHash("sha256").update(secondEventFile.buffer).digest("hex"), secondEventFile.buffer);
   const spec = { plan_id: plan, plan_hash: planHash, mode_id: mode, mode_version: 1, mode_digest: manifestDigest,
     valid_from: "2025-01-01T00:00:00Z", valid_until: "2030-01-01T00:00:00Z", purpose: "offline-review",
-    allow_local_inference: !blue, sources: [{ target_id: target, classification: "internal",
-      capability: step, kind: blue ? "event-batch-v1" : "control-observations-v1", digest: sourceDigest, size_bytes: payload.length }] };
+    allow_local_inference: !eventBased, sources: [...payloads].map(([digest, raw]) => ({ target_id: target, classification: "internal",
+      capability: eventBased ? "event-review" : step, kind: eventBased ? "event-batch-v1" : "control-observations-v1",
+      digest, size_bytes: raw.length })) };
   let requested = false;
   let allowed = false;
-  let uploaded = false;
+  const uploaded = new Set<string>();
   let isPublished = false;
   let deniedDownload = false;
   let decision: Decision | null = null;
@@ -83,8 +99,8 @@ function fixture(mode = "white") {
       if (["targets", "authorizations", "assessments"].includes(resource)) return list();
       if (resource === "team-selection") return json({ version: 8, selection: { mode_id: mode, mode_digest: manifestDigest, mode_version: 1 } });
       if (resource === "team-modes") return json({ items: [{ digest: manifestDigest, eligible_for_analysis: true,
-        manifest: { id: mode, version: 1, label: blue ? "Blue Team" : "White Team",
-          inputs: [blue ? "Eventos minimizados" : "Plan con decisión de alcance"],
+        manifest: { id: mode, version: 1, label: purple ? "Purple Team" : blue ? "Blue Team" : "White Team",
+          inputs: [eventBased ? "Eventos minimizados" : "Plan con decisión de alcance"],
           workflow: [{ id: step, kind: "capability", tool: step }] } }] });
       if (resource === "plans/" + plan) return json({ id: plan, hash: planHash, status: "reviewed", denials: [],
         authorization: { revision: 1, valid_from: spec.valid_from, valid_until: spec.valid_until },
@@ -105,18 +121,21 @@ function fixture(mode = "white") {
         allowed = true;
         return json({ status: "approved" });
       }
-      if (resource === `evidence-permissions/${permission}/revisions/1/sources/${sourceDigest}`) {
+      const uploadPrefix = `evidence-permissions/${permission}/revisions/1/sources/`;
+      if (resource.startsWith(uploadPrefix)) {
+        const digest = resource.slice(uploadPrefix.length);
         expect(role).toBe("operator");
         expect(allowed).toBe(true);
         expect(request.headers()["content-type"]).toBe("application/json");
-        expect(request.postDataBuffer()).toEqual(payload);
-        uploaded = true;
-        return json({ source_digest: sourceDigest });
+        expect(request.postDataBuffer()).toEqual(payloads.get(digest));
+        uploaded.add(digest);
+        return json({ source_digest: digest });
       }
       if (resource === "analyses" && method === "POST") {
-        expect(uploaded).toBe(true);
+        expect(uploaded.size).toBe(payloads.size);
         expect(request.postDataJSON()).toEqual({ permission_id: permission, permission_revision: 1,
-          selection_version: 8, sources: [sourceDigest], ...(blue ? { event_rule: blueRule } : {}) });
+          selection_version: 8, sources: [...payloads.keys()].sort(), ...(blue ? { event_rule: blueRule } : {}),
+          ...(purple ? { coverage_scenario: coverageScenario } : {}) });
         return json({ id: analysis, snapshot_digest: planHash, created_at: now }, 201);
       }
       if (resource === "analyses/" + analysis) {
@@ -149,6 +168,10 @@ function fixture(mode = "white") {
         return json({ analysis_id: analysis, author_id: "operator", snapshot_digest: planHash,
           conclusions: [{ id: conclusion, status: blue ? "missing" : "observed", citations: [sourceDigest], observation: null,
             ...(blue ? { triage: { rule_id: blueRule, batches_evaluated: 1, matching_events: 0 } } : {}),
+            ...(purple ? { coverage: { scenario_id: coverageScenario.scenario_id, target_id: target, detected: 1, evaluated: 2,
+              rows: coverageScenario.checks.map((check, index) => ({
+                ...check, status: ["detected", "not_detected", "no_data"][index], citations: index === 2 ? [] : [sourceDigest],
+              })) } } : {}),
             provenance: { tool: step, mode_id: mode, mode_version: 1 } }], decisions: decision ? [decision] : [],
           publication: isPublished ? publication : null });
       }
@@ -319,6 +342,55 @@ test("Blue solicita el lote y muestra una ventana evaluada sin coincidencias", a
     await expect(reviewer.getByRole("heading", { name: "Triaje de eventos" })).toBeVisible();
     await expect(reviewer.getByText("No observado", { exact: true })).toBeVisible();
     await expect(reviewer.getByText("Eventos coincidentes", { exact: true })).toBeVisible();
+  } finally {
+    await reviewer.close();
+  }
+});
+
+test("Purple congela el escenario y muestra resultados y fuentes por control", async ({ page, browser }) => {
+  test.setTimeout(90_000);
+  const scenario = fixture("purple");
+  const reviewer = await browser.newPage();
+  try {
+    await scenario.install(page, "operator");
+    await scenario.install(reviewer, "approver");
+    await page.goto(link({ id: plan }));
+    await page.getByLabel("Activo autorizado").selectOption(target);
+    await page.getByLabel("Archivos JSON de eventos").setInputFiles([eventFile, secondEventFile]);
+    await page.getByRole("button", { name: "Solicitar permiso", exact: true }).click();
+    await expect(page.getByText("En espera de aprobación del permiso.")).toBeVisible();
+    await reviewer.goto(link({ permission }));
+    await reviewer.getByLabel("Decisión del permiso").selectOption("approve");
+    await reviewer.getByLabel("Motivo del permiso").fill("Evidencia revisada");
+    await reviewer.getByRole("button", { name: "Registrar decisión del permiso" }).click();
+    await expect(reviewer.getByText("Aprobado", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Actualizar permiso" }).click();
+    for (const file of [eventFile, secondEventFile]) {
+      const digest = createHash("sha256").update(file.buffer).digest("hex");
+      const source = page.locator("details").filter({ hasText: digest.slice(0, 12) });
+      await source.getByText(/^Fuente ·/).click();
+      await source.getByLabel("Cargar archivo autorizado").setInputFiles(file);
+      await source.getByRole("button", { name: "Cargar evidencia" }).click();
+      await expect(source.getByText("Evidencia cargada.")).toBeVisible();
+    }
+    const create = page.getByRole("button", { name: "Crear análisis offline" });
+    await expect(create).toBeDisabled();
+    await page.getByLabel("Escenario sintético de cobertura").setInputFiles({
+      name: "escenario.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(coverageScenario)),
+    });
+    await create.click();
+    await expect(page.getByRole("option", { name: "Inferencia local" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Avanzar siguiente paso" }).click();
+    await expect(page.getByText("En espera de revisión", { exact: true })).toBeVisible();
+    await reviewer.goto(link({ analysis }));
+    await expect(reviewer.getByText(/1 de 2 controles evaluados detectados/)).toBeVisible();
+    const matrix = reviewer.getByRole("region", { name: "Matriz de cobertura" });
+    const hit = matrix.getByRole("row").filter({ has: reviewer.getByRole("rowheader", { name: /^hit/ }) });
+    await expect(hit.getByText("Detectado", { exact: true })).toBeVisible();
+    await hit.getByText("1 SHA-256").click();
+    await expect(hit.getByText(createHash("sha256").update(eventContent).digest("hex"))).toBeVisible();
+    await expect(matrix.getByText("No detectado", { exact: true })).toBeVisible();
+    await expect(matrix.getByText("Sin datos suficientes", { exact: true })).toBeVisible();
   } finally {
     await reviewer.close();
   }

@@ -17,6 +17,7 @@ const resultNames: Record<Models["AnalysisConclusion"]["status"], string> = {
 const stepLabels: Record<string, string> = {
   "scope-record-review": "Revisión de registros de alcance",
   "event-review": "Triaje de eventos",
+  "coverage-comparison": "Cobertura de detección",
 };
 const stepLabel = (id: string) => stepLabels[id] ?? id;
 
@@ -116,7 +117,8 @@ function AnalysisRun({ ctx, id, permissionId, frozen }: { ctx: ViewContext; id: 
     <Button onClick={() => { void run.refetch(); }}>Actualizar análisis</Button></Card>;
   if (!detail) return <p role="status">Cargando análisis…</p>;
   const runnable = !frozen && (detail.state === "draft" || detail.state === "ready") && detail.next_step;
-  const allowInference = detail.next_step !== "event-review" && !permission.isError && permission.data?.spec.allow_local_inference &&
+  const deterministicOnly = detail.mode_id === "purple" || detail.next_step === "event-review";
+  const allowInference = !deterministicOnly && !permission.isError && permission.data?.spec.allow_local_inference &&
     permission.data.spec.plan_id === detail.plan_id && permission.data.spec.plan_hash === detail.plan_hash &&
     permission.data.status === "approved" && Date.parse(permission.data.spec.valid_until) > Date.now() &&
     Date.parse(permission.data.spec.valid_from) <= Date.now();
@@ -201,16 +203,19 @@ function AnalysisReview({ ctx, id }: { ctx: ViewContext; id: string }) {
     {!review.isError && data?.conclusions.map((conclusion) => {
       const decision = data.decisions.find((item) => item.conclusion_id === conclusion.id);
       const triage = conclusion.triage;
+      const coverage = conclusion.coverage;
       return <Card className="form-card plan-result" key={conclusion.id}>
-        <h2>{triage ? "Triaje de eventos" : conclusion.observation ? "Control · " + conclusion.observation.control : "Observación del alcance"}</h2>
-        <p>{triage && conclusion.status === "inconclusive" ? "Sin datos de la fuente requerida" : resultNames[conclusion.status]}
-          {!triage && " · " + stepLabel(conclusion.provenance.tool)}</p>
+        <h2>{coverage ? "Cobertura de detección" : triage ? "Triaje de eventos"
+          : conclusion.observation ? "Control · " + conclusion.observation.control : "Observación del alcance"}</h2>
+        {!coverage && <p>{triage && conclusion.status === "inconclusive" ? "Sin datos de la fuente requerida" : resultNames[conclusion.status]}
+          {!triage && " · " + stepLabel(conclusion.provenance.tool)}</p>}
+        {coverage && <CoverageTable matrix={coverage} />}
         {triage && <dl>
           <dt>Regla</dt><dd><code>{triage.rule_id}</code></dd>
           <dt>Lotes evaluados</dt><dd>{triage.batches_evaluated}</dd>
           <dt>Eventos coincidentes</dt><dd>{triage.matching_events}</dd>
         </dl>}
-        {conclusion.citations.length > 0 && <details><summary>Referencias de evidencia ({conclusion.citations.length})</summary>
+        {!coverage && conclusion.citations.length > 0 && <details><summary>Referencias de evidencia ({conclusion.citations.length})</summary>
           <ul>{conclusion.citations.map((citation) => <li key={citation}><code>{citation}</code></li>)}</ul></details>}
         {decision ? <p>Decisión registrada · {decision.decision === "approve" ? "Aprobada" : "Rechazada"} · {decision.reason}</p>
           : <div className="offline-decision">
@@ -225,6 +230,31 @@ function AnalysisReview({ ctx, id }: { ctx: ViewContext; id: string }) {
       </Card>;
     })}
   </div>;
+}
+
+function CoverageTable({ matrix }: { matrix: Models["CoverageMatrix"] }) {
+  const labels: Record<Models["CoverageRow"]["status"], string> = {
+    detected: "Detectado", not_detected: "No detectado", no_data: "Sin datos suficientes",
+  };
+  return <>
+    <p>Escenario <code>{matrix.scenario_id}</code> · Activo <code>{matrix.target_id}</code></p>
+    <p>{matrix.detected} de {matrix.evaluated} controles evaluados detectados.
+      {" "}{matrix.rows.length - matrix.evaluated} sin datos suficientes.</p>
+    <div className="table-wrap" role="region" tabIndex={0} aria-label="Matriz de cobertura">
+      <table>
+        <thead><tr>{["Control", "Ventana UTC", "Resultado", "Evidencia"].map((label) =>
+          <th key={label} scope="col">{label}</th>)}</tr></thead>
+        <tbody>{matrix.rows.map((row) => <tr key={row.control_id}>
+          <th scope="row">{row.control_id}<br /><code>{row.rule_id}</code></th>
+          <td><time dateTime={row.window_start}>{row.window_start}</time><br />
+            <time dateTime={row.window_end}>{row.window_end}</time></td>
+          <td>{labels[row.status]}</td>
+          <td>{row.citations.length ? <details><summary>{row.citations.length} SHA-256</summary>
+            <ul>{row.citations.map((digest) => <li key={digest}><code>{digest}</code></li>)}</ul></details> : "Sin fuentes"}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </>;
 }
 
 function DownloadReport({ ctx, id }: { ctx: ViewContext; id: string }) {

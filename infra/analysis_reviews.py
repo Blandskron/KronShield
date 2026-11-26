@@ -7,8 +7,7 @@ from uuid import UUID
 from sqlalchemy import Connection, text
 
 from application.access import AccessError, ProjectAccess
-from application.analyses import DEFAULT_EVENT_RULE
-from application.analysis_dispatch import OfflineInput, StepOutput, event_review, next_tool
+from application.analysis_dispatch import OfflineInput, StepOutput, check_capability_result, next_tool, uses_evidence
 from application.analysis_proposals import DraftProposal, ProposalReceipt
 from application.documents import DocumentCipher
 from application.evidence import ControlObservations, projection_bytes
@@ -57,19 +56,26 @@ def _conclusions(snapshot: dict, outcomes: list[dict], contexts: dict) -> list[d
         receipt = ProposalReceipt.model_validate(outcome["proposal_receipt"]) if outcome["proposal_receipt"] else None
         stage = snapshot["stage_manifests"].get(step, snapshot["manifest"])
         proof = {"tool": tool.value, "mode_id": stage["id"], "mode_version": stage["version"]}
-        allowed = {digest for digest, context in contexts.items() if context["capability"] == tool.value}
+        allowed = {digest for digest, context in contexts.items() if uses_evidence(tool, context["capability"])}
         if set(result.citations) - allowed:
             raise AccessError(409, "analysis_reference_invalid")
         observation = {"id": f"{step}.observation", "status": result.status, "citations": sorted(result.citations),
                        "observation": None, "provenance": proof}
-        if tool is ToolId.EVENT_REVIEW:
+        if tool in {ToolId.EVENT_REVIEW, ToolId.COVERAGE_COMPARISON}:
             inputs = tuple(OfflineInput(digest=digest, scope=contexts[digest]["scope"], source=contexts[digest]["source"])
                            for digest in sorted(allowed))
-            if receipt is not None or result != event_review(inputs, snapshot.get("event_rule", DEFAULT_EVENT_RULE)):
+            if receipt is not None:
                 raise AccessError(409, "analysis_reference_invalid")
+        else:
+            inputs = ()
+        try:
+            check_capability_result(tool, snapshot, result, inputs)
+        except ValueError:
+            raise AccessError(409, "analysis_reference_invalid") from None
+        if result.triage is not None:
             observation["triage"] = result.triage.model_dump(mode="json")
-        elif result.triage is not None or result.status == "missing":
-            raise AccessError(409, "analysis_reference_invalid")
+        if result.coverage is not None:
+            observation["coverage"] = result.coverage.model_dump(mode="json")
         decisions.append(observation)
         if receipt and isinstance(receipt.proposal, DraftProposal):
             draft = receipt.proposal

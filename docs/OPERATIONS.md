@@ -187,6 +187,33 @@ La regla disponible es `identity-login-failure-v1`. Examina lotes del productor 
 
 La conclusión y el informe publicable incluyen el identificador de la regla, los lotes evaluados, el número de coincidencias y los SHA-256 de las fuentes evaluadas. El resultado se limita a las ventanas aportadas. El permiso y las fuentes deben seguir vigentes para revisar y descargar el informe.
 
+## Evaluar cobertura de Purple Team
+
+Selecciona Purple Team y solicita permiso de evidencia desde un plan revisado. Los lotes usan el mismo formato Blue `event-batch-v1` y la capacidad `event-review`. Una vez aprobado el permiso, carga los lotes autorizados. Al crear el análisis, adjunta el escenario sintético. Por API se envía en el campo `coverage_scenario`.
+
+```json
+{
+  "scenario_id": "33333333-3333-4333-8333-333333333333",
+  "target_id": "11111111-1111-4111-8111-111111111111",
+  "checks": [
+    {
+      "control_id": "alerta-identidad",
+      "rule_id": "identity-login-failure-v1",
+      "window_start": "2026-11-26T12:00:00Z",
+      "window_end": "2026-11-26T12:30:00Z"
+    }
+  ]
+}
+```
+
+El escenario admite entre 1 y 30 controles con identificadores y combinaciones de regla y ventana distintos. Cada fila expresa una detección esperada para el mismo activo autorizado. Purple aplica la regla Blue fijada a las proyecciones autorizadas dentro de cada ventana. El paso se ejecuta en modo determinista.
+
+- **Detectado** si hay un evento que coincide dentro de la ventana.
+- **No detectado** si los lotes del productor requerido cubren toda la ventana y no hay coincidencias. Los lotes contiguos pueden completar la ventana.
+- **Sin datos suficientes** si falta cobertura temporal y no hay coincidencias. Una fila puede citar lotes parciales.
+
+El denominador incluye solo los controles detectados o evaluados con datos completos, y la matriz muestra los SHA-256 de las fuentes por fila. El aprobador revisa y publica la matriz completa. La descarga requiere que las fuentes congeladas sigan vigentes.
+
 ## API de análisis offline
 
 Las rutas de ciclo de vida bajo `/api/v1/projects/{project_id}/analyses` requieren `org_id`, autenticación y el permiso `evidence:request`. El resumen del análisis es visible para su autor mientras conserve la membresía de operador. La creación congela la selección de especialidad y su versión. Las respuestas exponen el estado, el hash del plan y los recibos de avance. El aprobador autorizado accede a las conclusiones desde las rutas de revisión.

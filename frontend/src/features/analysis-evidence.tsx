@@ -14,7 +14,7 @@ type Source = Models["Source"];
 
 export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models["Plan"] }) {
   const [target, setTarget] = useState("");
-  const [file, setFile] = useState<File>();
+  const [files, setFiles] = useState<File[]>([]);
   const [classification, setClassification] = useState<Models["Classification"]>("internal");
   const [localInference, setLocalInference] = useState(false);
   const scope = ["project-data", ctx.user, ctx.org, ctx.project];
@@ -30,34 +30,46 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
   const mode = catalog.data?.items.find((entry) => entry.digest === chosen?.mode_digest &&
     entry.manifest.id === chosen.mode_id && entry.manifest.version === chosen.mode_version);
   const blue = mode?.manifest.id === "blue";
-  const supported = blue || mode?.manifest.id === "white";
+  const purple = mode?.manifest.id === "purple";
+  const events = blue || purple;
+  const supported = events || mode?.manifest.id === "white";
   const targets = plan.targets.filter((item) => item.attribution === "first_party" && item.reason === "allowed");
   const submit = useMutation({
     mutationFn: async () => {
-      if (!file || file.size < 1 || file.size > MAX_BYTES) throw new Error("Selecciona un archivo JSON de hasta 1 MiB.");
       if (!targets.some((item) => item.id === target) || !mode || !supported) {
-        throw new Error("Selecciona un activo propio dentro del alcance y configura White Team o Blue Team.");
+        throw new Error("Selecciona un activo propio dentro del alcance y una especialidad disponible.");
       }
-      const raw = await file.arrayBuffer();
-      let content;
-      try {
-        content = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
-      } catch {
-        throw new Error("El archivo debe contener JSON válido en UTF-8.");
+      if (!files.length || files.length > (purple ? 50 : 1) || files.some((file) => file.size < 1 || file.size > MAX_BYTES)) {
+        throw new Error(purple ? "Selecciona entre 1 y 50 archivos JSON de hasta 1 MiB cada uno."
+          : "Selecciona un archivo JSON de hasta 1 MiB.");
       }
-      const validData = blue ? Array.isArray(content?.events)
-        : Array.isArray(content?.observations) && content.observations.length > 0;
-      if (content?.target_id !== target || !validData) {
-        throw new Error(blue ? "El JSON debe incluir el UUID del activo seleccionado y la lista de eventos."
-          : "El JSON debe incluir el UUID del activo seleccionado y sus observaciones.");
+      const sources: Models["Source"][] = [];
+      for (const file of files) {
+        const raw = await file.arrayBuffer();
+        let content;
+        try {
+          content = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
+        } catch {
+          throw new Error("Cada archivo debe contener JSON válido en UTF-8.");
+        }
+        const validData = events ? Array.isArray(content?.events)
+          : Array.isArray(content?.observations) && content.observations.length > 0;
+        if (content?.target_id !== target || !validData) {
+          throw new Error(events ? "El JSON debe incluir el UUID del activo seleccionado y la lista de eventos."
+            : "El JSON debe incluir el UUID del activo seleccionado y sus observaciones.");
+        }
+        sources.push({ digest: await sha256(raw), size_bytes: file.size, target_id: target, classification,
+          capability: events ? "event-review" : "scope-record-review",
+          kind: events ? "event-batch-v1" : "control-observations-v1" });
+      }
+      if (new Set(sources.map(({ digest }) => digest)).size !== sources.length) {
+        throw new Error("Selecciona archivos distintos.");
       }
       return createWithReceipt<Models["PermissionReceipt"]>(ctx, "evidence-permissions", {
         plan_id: plan.id, plan_hash: plan.hash, mode_id: mode.manifest.id, mode_version: mode.manifest.version,
         mode_digest: mode.digest, valid_from: plan.authorization.valid_from, valid_until: plan.authorization.valid_until,
-        purpose: "offline-review", allow_local_inference: !blue && classification === "internal" && localInference,
-        sources: [{ digest: await sha256(raw), size_bytes: file.size, target_id: target, classification,
-          capability: blue ? "event-review" : "scope-record-review",
-          kind: blue ? "event-batch-v1" : "control-observations-v1" }],
+        purpose: "offline-review", allow_local_inference: !events && classification === "internal" && localInference,
+        sources,
       } satisfies Models["PermissionSpec"]);
     },
   });
@@ -67,7 +79,7 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
     {catalog.isError || selection.isError ? <div className="offline-actions"><p role="alert">No se pudo cargar la especialidad.</p>
       <Button onClick={() => { void selection.refetch(); void catalog.refetch(); }}>Actualizar especialidad</Button></div>
       : catalog.isPending || selection.isPending ? <p role="status">Cargando requisitos…</p>
-      : !mode || !supported ? <p>Pide a un administrador del proyecto que configure White Team o Blue Team.</p>
+      : !mode || !supported ? <p>Pide a un administrador que configure White Team, Blue Team o Purple Team.</p>
       : !targets.length ? <p>El plan necesita un activo propio dentro del alcance.</p>
       : <form onSubmit={(event) => {
         event.preventDefault();
@@ -83,14 +95,15 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
           </select>
         </label>
         {target && <p>UUID del activo <code>{target}</code></p>}
-        <EvidenceFile label={blue ? "Archivo JSON de eventos" : "Archivo JSON de observaciones"} events={blue} onChange={setFile} />
+        <EvidenceFile label={purple ? "Archivos JSON de eventos" : events ? "Archivo JSON de eventos" : "Archivo JSON de observaciones"}
+          events={events} multiple={purple} onChange={setFiles} />
         <label className="input-field">Clasificación
           <select value={classification} onChange={(event) =>
             setClassification(event.target.value === "restricted" ? "restricted" : "internal")}>
             <option value="internal">Interna</option><option value="restricted">Restringida</option>
           </select>
         </label>
-        {!blue && classification === "internal" && <label className="check">
+        {!events && classification === "internal" && <label className="check">
           <input type="checkbox" checked={localInference} onChange={(event) => setLocalInference(event.target.checked)} />
           Solicitar permiso de inferencia local
         </label>}
@@ -101,14 +114,17 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
   </Card>;
 }
 
-function EvidenceFile({ label, events, onChange }: { label: string; events: boolean; onChange: (file?: File) => void }) {
+function EvidenceFile({ label, events, multiple = false, onChange }: {
+  label: string; events: boolean; multiple?: boolean; onChange: (files: File[]) => void;
+}) {
   const id = useId();
   return <div className="input-field"><label htmlFor={id}>{label}</label>
-    <input id={id} type="file" accept=".json,application/json" required aria-describedby={id + "-help"}
-      onChange={(event) => onChange(event.target.files?.[0])} />
+    <input id={id} type="file" accept=".json,application/json" required multiple={multiple} aria-describedby={id + "-help"}
+      onChange={(event) => onChange(Array.from(event.target.files ?? []))} />
     <small className="field-help" id={id + "-help"}>{events
       ? "JSON en UTF-8 con target_id, producer, window_start, window_end y events."
-      : "JSON en UTF-8 con target_id y observations."} Tamaño máximo de 1 MiB.</small>
+      : "JSON en UTF-8 con target_id y observations."} {multiple
+      ? "Hasta 50 archivos de 1 MiB cada uno." : "Tamaño máximo de 1 MiB."}</small>
   </div>;
 }
 
@@ -129,7 +145,7 @@ function UploadEvidence({ ctx, permission, source }: { ctx: ViewContext; permiss
   });
   return <form onSubmit={(event) => { event.preventDefault(); upload.mutate(); }}>
     <EvidenceFile label="Cargar archivo autorizado" events={source.kind === "event-batch-v1"}
-      onChange={(next) => { upload.reset(); setFile(next); }} />
+      onChange={([next]) => { upload.reset(); setFile(next); }} />
     <Button type="submit" disabled={upload.isPending}>{upload.isPending ? "Cargando…" : "Cargar evidencia"}</Button>
     {upload.isSuccess && <p role="status">Evidencia cargada.</p>}
     {upload.error && <p role="alert">{analysisFailure(upload.error)}</p>}
@@ -139,6 +155,7 @@ function UploadEvidence({ ctx, permission, source }: { ctx: ViewContext; permiss
 export function EvidencePermission({ ctx, id, planId, frozen }: {
   ctx: ViewContext; id: string; planId?: string; frozen: boolean;
 }) {
+  const [scenarioFile, setScenarioFile] = useState<File>();
   const path = `evidence-permissions/${id}`;
   const permission = useQuery({
     queryKey: ["project-data", ctx.user, ctx.org, ctx.project, "evidence-permission", id],
@@ -151,15 +168,27 @@ export function EvidencePermission({ ctx, id, planId, frozen }: {
     enabled: !frozen && ctx.permissions.includes("evidence:request"),
   });
   const draft = useMutation({
-    mutationFn: (record: Permission) => {
+    mutationFn: async (record: Permission) => {
       const selected = selection.data?.selection;
       if (!selected || !selection.data?.version || selected.mode_digest !== record.spec.mode_digest) {
         throw new Error("La especialidad vigente debe coincidir con la del permiso.");
+      }
+      let scenario: Models["CoverageScenario"] | undefined;
+      if (record.spec.mode_id === "purple") {
+        if (!scenarioFile || scenarioFile.size > 32 * 1024) throw new Error("Selecciona un escenario JSON de hasta 32 KiB.");
+        try {
+          scenario = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await scenarioFile.arrayBuffer()));
+        } catch {
+          throw new Error("El escenario debe contener JSON válido en UTF-8.");
+        }
+        if (!scenario || !Array.isArray(scenario.checks) || !scenario.checks.length)
+          throw new Error("El escenario debe incluir al menos un control.");
       }
       return createWithReceipt<Models["AnalysisCreated"]>(ctx, "analyses", {
         permission_id: record.id, permission_revision: record.revision, selection_version: selection.data.version,
         sources: record.spec.sources.map(({ digest }) => digest).sort(),
         ...(record.spec.mode_id === "blue" ? { event_rule: BLUE_RULE } : {}),
+        ...(scenario ? { coverage_scenario: scenario } : {}),
       } satisfies Models["AnalysisDraft"]);
     },
   });
@@ -197,7 +226,11 @@ export function EvidencePermission({ ctx, id, planId, frozen }: {
       {owner && current && <div className="offline-actions">
         {record.spec.sources.some((source) => source.kind !== "legacy-reference-v1") &&
           <p>Carga los archivos autorizados antes de crear el análisis.</p>}
-        <Button variant="primary" disabled={draft.isPending || selection.isPending} onClick={() => draft.mutate(record, {
+        {record.spec.mode_id === "purple" && <label className="input-field">Escenario sintético de cobertura
+          <input type="file" accept=".json,application/json" onChange={(event) => setScenarioFile(event.target.files?.[0])} />
+        </label>}
+        <Button variant="primary" disabled={draft.isPending || selection.isPending ||
+          (record.spec.mode_id === "purple" && !scenarioFile)} onClick={() => draft.mutate(record, {
           onSuccess: ({ id: analysis }) => { location.hash = plannerLink(ctx, { id: record.spec.plan_id, permission: id, analysis }); },
         })}>Crear análisis offline</Button>
         {draft.error && <p role="alert">{analysisFailure(draft.error)}</p>}

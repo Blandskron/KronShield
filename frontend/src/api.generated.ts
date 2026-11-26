@@ -983,6 +983,7 @@ export interface components {
         AnalysisConclusion: {
             /** Citations */
             citations: string[];
+            coverage?: components["schemas"]["CoverageMatrix"] | null;
             /** Id */
             id: string;
             observation: components["schemas"]["ControlObservation"] | null;
@@ -1081,6 +1082,7 @@ export interface components {
         };
         /** AnalysisDraft */
         AnalysisDraft: {
+            coverage_scenario?: components["schemas"]["CoverageScenario"] | null;
             /** Event Rule */
             event_rule?: "identity-login-failure-v1" | null;
             /**
@@ -1435,6 +1437,87 @@ export interface components {
              * @enum {string}
              */
             result: "observed" | "missing" | "inconclusive";
+        };
+        /** CoverageCheck */
+        CoverageCheck: {
+            /** Control Id */
+            control_id: string;
+            /**
+             * Rule Id
+             * @constant
+             */
+            rule_id: "identity-login-failure-v1";
+            /**
+             * Window End
+             * Format: date-time
+             */
+            window_end: string;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
+        };
+        /** CoverageMatrix */
+        CoverageMatrix: {
+            /** Detected */
+            detected: number;
+            /** Evaluated */
+            evaluated: number;
+            /** Rows */
+            rows: components["schemas"]["CoverageRow"][];
+            /**
+             * Scenario Id
+             * Format: uuid
+             */
+            scenario_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+        };
+        /** CoverageRow */
+        CoverageRow: {
+            /** Citations */
+            citations: string[];
+            /** Control Id */
+            control_id: string;
+            /**
+             * Rule Id
+             * @constant
+             */
+            rule_id: "identity-login-failure-v1";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "detected" | "not_detected" | "no_data";
+            /**
+             * Window End
+             * Format: date-time
+             */
+            window_end: string;
+            /**
+             * Window Start
+             * Format: date-time
+             */
+            window_start: string;
+        };
+        /** CoverageScenario */
+        CoverageScenario: {
+            /** Checks */
+            checks: components["schemas"]["CoverageCheck"][];
+            /**
+             * Scenario Id
+             * Format: uuid
+             */
+            scenario_id: string;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
         };
         /** Credentials */
         Credentials: {

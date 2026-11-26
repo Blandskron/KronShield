@@ -532,7 +532,7 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
 
         catalog = (await call("GET", path + "/team-modes", "viewer", 200, org=org)).json()["items"]
         assert len(catalog) == 10
-        assert {item["manifest"]["id"] for item in catalog if item["eligible_for_analysis"]} == {"white", "blue"}
+        assert {item["manifest"]["id"] for item in catalog if item["eligible_for_analysis"]} == {"white", "blue", "purple"}
         digests = {item["manifest"]["id"]: item["digest"] for item in catalog}
         selection = path + "/team-selection"
         empty = await call("GET", selection, "viewer", 200, org=org)
@@ -883,6 +883,53 @@ async def check_event_batch_upload(call, store, cipher, org, other_org, project,
     await call("PUT", upload, "operator", 409, org=org, headers=headers, data=payload)
     hidden = await call("GET", analysis + "/publication/report", "operator", 404, org=org)
     assert hidden.json()["code"] == "analysis_publication_not_found"
+    await check_purple_coverage(call, org, path, spec, source, payload, selected["version"])
+
+
+async def check_purple_coverage(call, org, path, base_spec, source, payload, previous_selection):
+    mode = TEAM_CATALOG[TeamId.PURPLE]
+    receipt = (await call("POST", path, "operator", 201, org=org, headers={"Idempotency-Key": "purple-batch-permission"},
+                          json={**base_spec, "mode_id": mode.id.value, "mode_digest": mode.digest,
+                                "mode_version": mode.version, "sources": [source]})).json()
+    permission = f"{path}/{receipt['id']}"
+    await call("POST", permission + "/decisions", "approver", 200, org=org,
+               json={"revision": 1, "decision": "approve", "reason": "Purple evidence approved"})
+    upload = f"{permission}/revisions/1/sources/{source['digest']}"
+    await call("PUT", upload, "operator", 200, org=org, headers={"Content-Type": "application/json"}, data=payload)
+    root = path.removesuffix("/evidence-permissions")
+    selection = (await call("PUT", root + "/team-selection", "admin", 200, org=org,
+                            headers={"If-Match": f'"{previous_selection}"'}, json={"mode_id": "purple"})).json()
+    scenario = {"scenario_id": str(uuid4()), "target_id": source["target_id"], "checks": [
+        {"control_id": control, "rule_id": "identity-login-failure-v1",
+         "window_start": f"2026-01-01T{start}:00Z", "window_end": f"2026-01-01T{end}:00Z"}
+        for control, start, end in (("hit", "14:00", "14:30"), ("negative", "13:00", "14:00"), ("gap", "14:45", "15:45"))
+    ]}
+    body = {"permission_id": receipt["id"], "permission_revision": 1, "selection_version": selection["version"],
+            "sources": [source["digest"]]}
+    key = {"Idempotency-Key": "purple-coverage-draft-once"}
+    await call("POST", root + "/analyses", "operator", 422, org=org, headers=key, json=body)
+    await call("POST", root + "/analyses", "operator", 422, org=org, headers=key,
+               json={**body, "coverage_scenario": {**scenario, "target_id": str(uuid4())}})
+    draft = (await call("POST", root + "/analyses", "operator", 201, org=org, headers=key,
+                        json={**body, "coverage_scenario": scenario})).json()
+    analysis = f"{root}/analyses/{draft['id']}"
+    step = analysis + "/steps/coverage-comparison"
+    key = {"Idempotency-Key": "purple-coverage-step-once"}
+    await call("POST", step, "operator", 422, org=org, headers=key, json={"strategy": "assisted"})
+    assert (await call("POST", step, "operator", 200, org=org, headers=key, json={})).json()["state"] == "completed"
+    item, = (await call("GET", analysis + "/review", "approver", 200, org=org)).json()["conclusions"]
+    matrix = item["coverage"]
+    assert (matrix["detected"], matrix["evaluated"]) == (1, 2)
+    assert [(row["status"], row["citations"]) for row in matrix["rows"]] == [
+        (status, [source["digest"]]) for status in ("detected", "not_detected", "no_data")
+    ]
+    await call("PUT", analysis + "/review/decisions/" + item["id"], "approver", 200, org=org,
+               json={"decision": "approve", "reason": "Synthetic scenario verified"})
+    await call("PUT", analysis + "/publication", "approver", 200, org=org)
+    report = (await call("GET", analysis + "/publication/report", "operator", 200, org=org)).text
+    assert "<dt>Controles evaluados</dt><dd>2</dd>" in report and "Sin datos suficientes" in report
+    await call("PUT", upload + "/disposition", "approver", 200, org=org, json={"reason": "Withdraw coverage evidence"})
+    await call("GET", analysis + "/publication/report", "operator", 404, org=org)
 
 
 async def check_analysis_ledger(call, admin, store, cipher, org, project, users, path, base_spec, legacy, inference):
@@ -1051,13 +1098,13 @@ async def check_analysis_dispatch(admin, store, cipher, scope, users, drafts, re
     started, release = Event(), Event()
     calls = []
 
-    def wait_and_observe(inputs):
+    def wait_and_observe(work):
         assert store.engine.pool.checkedout() == 0
-        calls.append(inputs)
+        calls.append(work.inputs)
         started.set()
         if not release.wait(10):
             raise RuntimeError("fixture handler timed out")
-        return StepOutput(status="observed", citations=(inputs[0].digest,))
+        return StepOutput(status="observed", citations=(work.inputs[0].digest,))
 
     assert port.state(drafts["normal"]) == "draft"
     task = asyncio.create_task(asyncio.to_thread(
@@ -1095,10 +1142,10 @@ async def check_analysis_dispatch(admin, store, cipher, scope, users, drafts, re
     with pytest.raises(AccessError, match="analysis_not_found"):
         foreign.start(drafts["foreign"], "white", "dispatcher-foreign-key", frozenset({tool}))
 
-    def revoke_then_observe(inputs):
+    def revoke_then_observe(work):
         with store.project(users["approver"], *scope, Action.DECIDE_EVIDENCE) as (connection, caller):
             evidence.decide(connection, caller, revoke_request.permission_id, 1, "revoke", "Revoked in fixture")
-        return StepOutput(status="observed", citations=(inputs[0].digest,))
+        return StepOutput(status="observed", citations=(work.inputs[0].digest,))
 
     revoked = dispatch_step(port, {tool: revoke_then_observe}, drafts["revoke"], "white", "dispatcher-revoke-key")
     assert revoked["state"] == "blocked" and revoked["reason"] == "evidence_permission_inactive"

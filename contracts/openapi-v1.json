@@ -70,6 +70,16 @@
             "title": "Citations",
             "type": "array"
           },
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoverageMatrix"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "pattern": "^[a-z][a-z0-9-]{0,63}[.](observation|draft)$",
             "title": "Id",
@@ -318,6 +328,16 @@
       "AnalysisDraft": {
         "additionalProperties": false,
         "properties": {
+          "coverage_scenario": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoverageScenario"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "event_rule": {
             "anyOf": [
               {
@@ -1164,6 +1184,168 @@
           "result"
         ],
         "title": "ControlObservation",
+        "type": "object"
+      },
+      "CoverageCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "control_id": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "title": "Control Id",
+            "type": "string"
+          },
+          "rule_id": {
+            "const": "identity-login-failure-v1",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "control_id",
+          "rule_id",
+          "window_start",
+          "window_end"
+        ],
+        "title": "CoverageCheck",
+        "type": "object"
+      },
+      "CoverageMatrix": {
+        "additionalProperties": false,
+        "properties": {
+          "detected": {
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "Detected",
+            "type": "integer"
+          },
+          "evaluated": {
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "Evaluated",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageRow"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Rows",
+            "type": "array"
+          },
+          "scenario_id": {
+            "format": "uuid",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "target_id",
+          "detected",
+          "evaluated",
+          "rows"
+        ],
+        "title": "CoverageMatrix",
+        "type": "object"
+      },
+      "CoverageRow": {
+        "additionalProperties": false,
+        "properties": {
+          "citations": {
+            "items": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Citations",
+            "type": "array"
+          },
+          "control_id": {
+            "pattern": "^[a-z][a-z0-9-]{0,39}$",
+            "title": "Control Id",
+            "type": "string"
+          },
+          "rule_id": {
+            "const": "identity-login-failure-v1",
+            "title": "Rule Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "detected",
+              "not_detected",
+              "no_data"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "control_id",
+          "rule_id",
+          "window_start",
+          "window_end",
+          "status",
+          "citations"
+        ],
+        "title": "CoverageRow",
+        "type": "object"
+      },
+      "CoverageScenario": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageCheck"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Checks",
+            "type": "array"
+          },
+          "scenario_id": {
+            "format": "uuid",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "target_id",
+          "checks"
+        ],
+        "title": "CoverageScenario",
         "type": "object"
       },
       "Credentials": {

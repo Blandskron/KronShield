@@ -1,17 +1,58 @@
 """Inputs and budget arithmetic for offline analysis records."""
 
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from application.access import AccessError
-from application.evidence import Digest, EvidenceModel, Revision
+from application.evidence import Digest, EvidenceModel, Revision, normalize_utc
 from domain.team_modes import TeamMode
 
 PROJECT_CONCURRENCY = 2
 EventRuleId = Literal["identity-login-failure-v1"]
 DEFAULT_EVENT_RULE: EventRuleId = "identity-login-failure-v1"
+ControlId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
+
+
+class CoverageCheck(EvidenceModel):
+    control_id: ControlId
+    rule_id: EventRuleId
+    window_start: AwareDatetime = Field(strict=True)
+    window_end: AwareDatetime = Field(strict=True)
+
+    @field_validator("window_start", "window_end", mode="before")
+    @classmethod
+    def parse_timestamp(cls, value):
+        if isinstance(value, str):
+            return datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+        return value
+
+    @field_validator("window_start", "window_end")
+    @classmethod
+    def normalize_timestamp(cls, value: datetime) -> datetime:
+        return normalize_utc(value)
+
+    @model_validator(mode="after")
+    def require_window(self):
+        if self.window_start >= self.window_end:
+            raise ValueError("Expected a positive coverage window")
+        return self
+
+
+class CoverageScenario(EvidenceModel):
+    scenario_id: UUID
+    target_id: UUID
+    checks: Annotated[tuple[CoverageCheck, ...], Field(min_length=1, max_length=30)]
+
+    @model_validator(mode="after")
+    def unique_controls(self):
+        if len({item.control_id for item in self.checks}) != len(self.checks):
+            raise ValueError("Expected unique controls")
+        if len({(item.rule_id, item.window_start, item.window_end) for item in self.checks}) != len(self.checks):
+            raise ValueError("Expected distinct rule and window combinations")
+        return self
 
 
 class AnalysisDraft(EvidenceModel):
@@ -20,6 +61,7 @@ class AnalysisDraft(EvidenceModel):
     selection_version: Annotated[int, Field(strict=True, gt=0, le=9007199254740991)]
     sources: Annotated[tuple[Digest, ...], Field(min_length=1, max_length=50)]
     event_rule: EventRuleId | None = None
+    coverage_scenario: CoverageScenario | None = None
 
     @model_validator(mode="after")
     def unique_sources(self):

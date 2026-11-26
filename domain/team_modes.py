@@ -101,7 +101,7 @@ class TeamMode(CatalogModel):
 
     @property
     def eligible_for_analysis(self) -> bool:
-        return self.id in {TeamId.WHITE, TeamId.BLUE}
+        return self.id in {TeamId.WHITE, TeamId.BLUE, TeamId.PURPLE}
 
     def canonical_json(self) -> str:
         return json.dumps(self.model_dump(mode="json"), sort_keys=True, ensure_ascii=False,
