@@ -992,6 +992,7 @@ export interface components {
              * @enum {string}
              */
             status: "observed" | "missing" | "inconclusive";
+            triage?: components["schemas"]["EventTriage"] | null;
         };
         /** AnalysisCreated */
         AnalysisCreated: {
@@ -1080,6 +1081,8 @@ export interface components {
         };
         /** AnalysisDraft */
         AnalysisDraft: {
+            /** Event Rule */
+            event_rule?: "identity-login-failure-v1" | null;
             /**
              * Permission Id
              * Format: uuid
@@ -1519,6 +1522,18 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /** EventTriage */
+        EventTriage: {
+            /** Batches Evaluated */
+            batches_evaluated: number;
+            /** Matching Events */
+            matching_events: number;
+            /**
+             * Rule Id
+             * @constant
+             */
+            rule_id: "identity-login-failure-v1";
         };
         /** EvidenceDecisionInput */
         EvidenceDecisionInput: {

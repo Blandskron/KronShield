@@ -5,10 +5,11 @@ from dataclasses import dataclass
 from typing import Annotated, Literal, Protocol
 from uuid import UUID
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from application.access import AccessError
-from application.evidence import ControlObservations, Digest, EvidenceModel, Revision
+from application.analyses import DEFAULT_EVENT_RULE, EventRuleId
+from application.evidence import ControlObservations, Digest, EventBatch, EvidenceModel, Revision, projection_bytes
 from domain.team_modes import CapabilityStep, TeamMode, TeamStep, ToolId
 
 
@@ -34,18 +35,46 @@ class LegacySummary(EvidenceModel):
 class OfflineInput(EvidenceModel):
     digest: Digest
     scope: ScopeReference
-    source: LegacySummary | ControlObservations
+    source: LegacySummary | ControlObservations | EventBatch
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def parse_event_projection(cls, value):
+        if isinstance(value, dict) and "events" in value:
+            return EventBatch.model_validate_json(projection_bytes(value))
+        return value
+
+
+class EventTriage(EvidenceModel):
+    rule_id: EventRuleId
+    batches_evaluated: Annotated[int, Field(strict=True, ge=0, le=50)]
+    matching_events: Annotated[int, Field(strict=True, ge=0, le=100000)]
 
 
 class StepOutput(EvidenceModel):
-    status: Literal["observed", "inconclusive"]
+    status: Literal["observed", "missing", "inconclusive"]
     citations: Annotated[tuple[Digest, ...], Field(max_length=50)] = ()
+    triage: EventTriage | None = None
 
     @model_validator(mode="after")
     def check_citations(self):
-        if len(set(self.citations)) != len(self.citations) or (self.status == "observed" and not self.citations):
+        if len(set(self.citations)) != len(self.citations) or (self.status != "inconclusive" and not self.citations):
             raise ValueError("Expected unique citations for an observation")
         return self
+
+
+def event_review(inputs: tuple[OfflineInput, ...], rule_id: EventRuleId = DEFAULT_EVENT_RULE) -> StepOutput:
+    """Evaluate the reviewed v1 identity rule using only declared event fields."""
+    if rule_id != DEFAULT_EVENT_RULE:
+        raise ValueError("Unknown event rule")
+    batches = [(item.digest, item.source) for item in inputs
+               if isinstance(item.source, EventBatch) and item.source.producer == "identity-audit"
+               and item.source.target_id == item.scope.target_id]
+    matches = {(batch.target_id, event.event_id) for _, batch in batches
+               for event in batch.events if event.kind == "login-failure"}
+    status = "observed" if matches else "missing" if batches else "inconclusive"
+    return StepOutput(status=status, citations=tuple(sorted(digest for digest, _ in batches)),
+                      triage=EventTriage(rule_id=rule_id, batches_evaluated=len(batches), matching_events=len(matches)))
 
 
 @dataclass(frozen=True)

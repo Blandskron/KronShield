@@ -13,7 +13,7 @@ from adapters.api.contract import Output
 from adapters.api.evidence import IdempotencyKey, required_idempotency_key
 from application.access import Action
 from application.analyses import AnalysisDraft
-from application.analysis_dispatch import StepOutput
+from application.analysis_dispatch import EventTriage, OfflineInput, StepOutput, dispatch_step, event_review
 from application.analysis_proposals import ModelVersion, ProposalProvider, generate_proposal
 from application.documents import DocumentCipher
 from application.evidence import ControlObservation, Digest, EvidenceModel, Revision
@@ -26,7 +26,13 @@ from infra import analysis_reviews
 
 Strategy = Literal["deterministic", "assisted"]
 Inference = tuple[ModelVersion, ProposalProvider]
-AVAILABLE = frozenset({ToolId.SCOPE_RECORD_REVIEW})
+
+
+def review_scope(inputs: tuple[OfflineInput, ...]) -> StepOutput:
+    return StepOutput(status="observed", citations=tuple(item.digest for item in inputs))
+
+
+DETERMINISTIC = {ToolId.SCOPE_RECORD_REVIEW: review_scope, ToolId.EVENT_REVIEW: event_review}
 
 
 class AnalysisAdvance(EvidenceModel):
@@ -98,6 +104,7 @@ class AnalysisConclusion(Output):
     status: Literal["observed", "missing", "inconclusive"]
     citations: list[Digest]
     observation: ControlObservation | None
+    triage: EventTriage | None = None
     provenance: AnalysisProvenance
 
 
@@ -138,14 +145,14 @@ def analysis_routes(auth: RequestAuth, store: PostgresAuthStore, cipher: Documen
                          body: AnalysisAdvance, idempotency_key: IdempotencyKey = None) -> dict:
         dispatch = PostgresDispatch(store, cipher, org_id, project_id, identity.user_id)
         key = required_idempotency_key(idempotency_key)
-        assisted = body.strategy == "assisted"
-        work = dispatch.start(analysis_id, step_id, key, AVAILABLE, assisted=assisted,
+        if body.strategy == "deterministic":
+            return dispatch_step(dispatch, DETERMINISTIC, analysis_id, step_id, key)
+        work = dispatch.start(analysis_id, step_id, key, frozenset(DETERMINISTIC), assisted=True,
                               inference_available=inference is not None)
         if isinstance(work, dict):
             return work
         proposal = generate_proposal(work.prepared, *inference) if isinstance(work, AssistedWork) and inference else None
-        # Admission verified the scope records. Other offline capabilities register in their own tasks.
-        output = StepOutput(status="observed", citations=tuple(item.digest for item in work.inputs))
+        output = review_scope(work.inputs)
         return dispatch.finish(analysis_id, step_id, key, work.reservation_id, output=output, failure=None,
                                proposal=proposal)
 

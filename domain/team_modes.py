@@ -101,8 +101,7 @@ class TeamMode(CatalogModel):
 
     @property
     def eligible_for_analysis(self) -> bool:
-        # Availability will require implemented adapters and project authorization.
-        return False
+        return self.id in {TeamId.WHITE, TeamId.BLUE}
 
     def canonical_json(self) -> str:
         return json.dumps(self.model_dump(mode="json"), sort_keys=True, ensure_ascii=False,

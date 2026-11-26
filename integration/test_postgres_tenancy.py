@@ -531,7 +531,8 @@ async def test_inventory_and_immutable_authorization_workflow(database, membersh
         await call("GET", "/ready", "admin", 200)
 
         catalog = (await call("GET", path + "/team-modes", "viewer", 200, org=org)).json()["items"]
-        assert len(catalog) == 10 and all(not item["eligible_for_analysis"] for item in catalog)
+        assert len(catalog) == 10
+        assert {item["manifest"]["id"] for item in catalog if item["eligible_for_analysis"]} == {"white", "blue"}
         digests = {item["manifest"]["id"]: item["digest"] for item in catalog}
         selection = path + "/team-selection"
         empty = await call("GET", selection, "viewer", 200, org=org)
@@ -849,8 +850,39 @@ async def check_event_batch_upload(call, store, cipher, org, other_org, project,
         with store.project(users[role], UUID(org), UUID(project), Action.READ) as (connection, caller):
             context = analysis_context(connection, caller, cipher, UUID(permission_id), 1, source["digest"])
             assert context["source"] == {**batch, "events": [{**event, "occurred_at": "2026-01-01T14:00:00Z"}]}
+
+    project_root = path.removesuffix("/evidence-permissions")
+    selection = project_root + "/team-selection"
+    prior = (await call("GET", selection, "operator", 200, org=org)).json()
+    selected = (await call("PUT", selection, "admin", 200, org=org, headers={"If-Match": f'"{prior["version"]}"'},
+                           json={"mode_id": "blue"})).json()
+    request = {"permission_id": permission_id, "permission_revision": 1, "selection_version": selected["version"],
+               "sources": [source["digest"]], "event_rule": "identity-login-failure-v1"}
+    analyses_path = project_root + "/analyses"
+    key = {"Idempotency-Key": "blue-analysis-draft-once"}
+    await call("POST", analyses_path, "operator", 422, org=org, headers=key, json={**request, "event_rule": "arbitrary-rule"})
+    draft = (await call("POST", analyses_path, "operator", 201, org=org, headers=key, json=request)).json()
+    analysis = f"{analyses_path}/{draft['id']}"
+    step = analysis + "/steps/event-review"
+    step_key = {"Idempotency-Key": "blue-analysis-advance-once"}
+    await call("POST", step, "operator", 422, org=org, headers=step_key, json={"strategy": "assisted"})
+    completed = (await call("POST", step, "operator", 200, org=org, headers=step_key, json={})).json()
+    assert completed["state"] == "completed"
+    assert (await call("POST", step, "operator", 200, org=org, headers=step_key, json={})).json() == completed
+    review = (await call("GET", analysis + "/review", "approver", 200, org=org)).json()
+    item, = review["conclusions"]
+    assert item["status"] == "observed" and item["citations"] == [source["digest"]]
+    assert item["triage"] == {"rule_id": request["event_rule"], "batches_evaluated": 1, "matching_events": 1}
+    await call("PUT", analysis + "/review/decisions/" + item["id"], "approver", 200, org=org,
+               json={"decision": "approve", "reason": "Synthetic triage verified"})
+    await call("PUT", analysis + "/publication", "approver", 200, org=org)
+    report = (await call("GET", analysis + "/publication/report", "operator", 200, org=org)).text
+    assert request["event_rule"] in report and "<dt>Eventos coincidentes</dt><dd>1</dd>" in report
+    assert event["event_id"] not in report
     await call("PUT", upload + "/disposition", "approver", 200, org=org, json={"reason": "Withdraw event source"})
     await call("PUT", upload, "operator", 409, org=org, headers=headers, data=payload)
+    hidden = await call("GET", analysis + "/publication/report", "operator", 404, org=org)
+    assert hidden.json()["code"] == "analysis_publication_not_found"
 
 
 async def check_analysis_ledger(call, admin, store, cipher, org, project, users, path, base_spec, legacy, inference):

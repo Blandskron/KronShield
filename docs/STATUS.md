@@ -10,7 +10,7 @@ El recorrido actual permite iniciar sesión en el piloto, configurar una organiz
 | Piloto | Docker Compose, gateway en loopback, PostgreSQL, login local con bootstrap de un solo uso y cliente Typer. |
 | API y web | OIDC configurable, membresías, inventario, mandatos PDF cifrados, evaluaciones, revisión de alcance e importación legada. |
 | Análisis offline | Selección de especialidad por proyecto, permisos de evidencia, revisión determinista de registros de alcance, inferencia local optativa, aprobación y descarga del informe. |
-| Blue Team | Importación API de lotes de eventos autorizados, normalizados a UTC y almacenados como proyecciones cifradas. El triaje por reglas está pendiente. |
+| Blue Team | Importación de lotes autorizados y triaje determinista de fallos de autenticación en el planificador, con revisión humana e informe. |
 | Trazabilidad | SHA-256 del mandato y del plan, revisiones inmutables, decisiones y eventos de la simulación. |
 | Entrega | Contrato OpenAPI v1, tipos TypeScript generados, CI de Python, PostgreSQL, accesibilidad y paridad web/CLI. |
 

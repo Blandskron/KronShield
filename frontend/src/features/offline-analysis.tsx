@@ -14,7 +14,11 @@ const strategyNames: Record<Strategy, string> = { deterministic: "Determinista",
 const resultNames: Record<Models["AnalysisConclusion"]["status"], string> = {
   observed: "Observado", missing: "No observado", inconclusive: "Inconcluso",
 };
-const stepLabel = (id: string) => id === "scope-record-review" ? "Revisión de registros de alcance" : id;
+const stepLabels: Record<string, string> = {
+  "scope-record-review": "Revisión de registros de alcance",
+  "event-review": "Triaje de eventos",
+};
+const stepLabel = (id: string) => stepLabels[id] ?? id;
 
 export function OfflineAnalysis({ ctx, reference, plan, frozen }: {
   ctx: ViewContext; reference: PlannerReference | null; plan?: Models["Plan"]; frozen: boolean;
@@ -112,7 +116,7 @@ function AnalysisRun({ ctx, id, permissionId, frozen }: { ctx: ViewContext; id: 
     <Button onClick={() => { void run.refetch(); }}>Actualizar análisis</Button></Card>;
   if (!detail) return <p role="status">Cargando análisis…</p>;
   const runnable = !frozen && (detail.state === "draft" || detail.state === "ready") && detail.next_step;
-  const allowInference = !permission.isError && permission.data?.spec.allow_local_inference &&
+  const allowInference = detail.next_step !== "event-review" && !permission.isError && permission.data?.spec.allow_local_inference &&
     permission.data.spec.plan_id === detail.plan_id && permission.data.spec.plan_hash === detail.plan_hash &&
     permission.data.status === "approved" && Date.parse(permission.data.spec.valid_until) > Date.now() &&
     Date.parse(permission.data.spec.valid_from) <= Date.now();
@@ -196,9 +200,16 @@ function AnalysisReview({ ctx, id }: { ctx: ViewContext; id: string }) {
     </Card>
     {!review.isError && data?.conclusions.map((conclusion) => {
       const decision = data.decisions.find((item) => item.conclusion_id === conclusion.id);
+      const triage = conclusion.triage;
       return <Card className="form-card plan-result" key={conclusion.id}>
-        <h2>{conclusion.observation ? "Control · " + conclusion.observation.control : "Observación del alcance"}</h2>
-        <p>{resultNames[conclusion.status]} · {stepLabel(conclusion.provenance.tool)}</p>
+        <h2>{triage ? "Triaje de eventos" : conclusion.observation ? "Control · " + conclusion.observation.control : "Observación del alcance"}</h2>
+        <p>{triage && conclusion.status === "inconclusive" ? "Sin datos de la fuente requerida" : resultNames[conclusion.status]}
+          {!triage && " · " + stepLabel(conclusion.provenance.tool)}</p>
+        {triage && <dl>
+          <dt>Regla</dt><dd><code>{triage.rule_id}</code></dd>
+          <dt>Lotes evaluados</dt><dd>{triage.batches_evaluated}</dd>
+          <dt>Eventos coincidentes</dt><dd>{triage.matching_events}</dd>
+        </dl>}
         {conclusion.citations.length > 0 && <details><summary>Referencias de evidencia ({conclusion.citations.length})</summary>
           <ul>{conclusion.citations.map((citation) => <li key={citation}><code>{citation}</code></li>)}</ul></details>}
         {decision ? <p>Decisión registrada · {decision.decision === "approve" ? "Aprobada" : "Rechazada"} · {decision.reason}</p>

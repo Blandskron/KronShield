@@ -1,6 +1,6 @@
 """Inputs and budget arithmetic for offline analysis records."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -10,6 +10,8 @@ from application.evidence import Digest, EvidenceModel, Revision
 from domain.team_modes import TeamMode
 
 PROJECT_CONCURRENCY = 2
+EventRuleId = Literal["identity-login-failure-v1"]
+DEFAULT_EVENT_RULE: EventRuleId = "identity-login-failure-v1"
 
 
 class AnalysisDraft(EvidenceModel):
@@ -17,6 +19,7 @@ class AnalysisDraft(EvidenceModel):
     permission_revision: Revision
     selection_version: Annotated[int, Field(strict=True, gt=0, le=9007199254740991)]
     sources: Annotated[tuple[Digest, ...], Field(min_length=1, max_length=50)]
+    event_rule: EventRuleId | None = None
 
     @model_validator(mode="after")
     def unique_sources(self):

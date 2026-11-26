@@ -7,12 +7,13 @@ from uuid import UUID
 from sqlalchemy import Connection, text
 
 from application.access import AccessError, ProjectAccess
-from application.analysis_dispatch import StepOutput, next_tool
+from application.analyses import DEFAULT_EVENT_RULE
+from application.analysis_dispatch import OfflineInput, StepOutput, event_review, next_tool
 from application.analysis_proposals import DraftProposal, ProposalReceipt
 from application.documents import DocumentCipher
 from application.evidence import ControlObservations, projection_bytes
 from application.scope_review import fingerprint
-from domain.team_modes import TeamMode
+from domain.team_modes import TeamMode, ToolId
 from infra.analyses import lock_budget
 from infra.engagements import organization_stop
 from infra.evidence import analysis_context
@@ -59,8 +60,17 @@ def _conclusions(snapshot: dict, outcomes: list[dict], contexts: dict) -> list[d
         allowed = {digest for digest, context in contexts.items() if context["capability"] == tool.value}
         if set(result.citations) - allowed:
             raise AccessError(409, "analysis_reference_invalid")
-        decisions.append({"id": f"{step}.observation", "status": result.status, "citations": sorted(result.citations),
-                          "observation": None, "provenance": proof})
+        observation = {"id": f"{step}.observation", "status": result.status, "citations": sorted(result.citations),
+                       "observation": None, "provenance": proof}
+        if tool is ToolId.EVENT_REVIEW:
+            inputs = tuple(OfflineInput(digest=digest, scope=contexts[digest]["scope"], source=contexts[digest]["source"])
+                           for digest in sorted(allowed))
+            if receipt is not None or result != event_review(inputs, snapshot.get("event_rule", DEFAULT_EVENT_RULE)):
+                raise AccessError(409, "analysis_reference_invalid")
+            observation["triage"] = result.triage.model_dump(mode="json")
+        elif result.triage is not None or result.status == "missing":
+            raise AccessError(409, "analysis_reference_invalid")
+        decisions.append(observation)
         if receipt and isinstance(receipt.proposal, DraftProposal):
             draft = receipt.proposal
             if (draft.observation.result == "inconclusive" or set(draft.citations) - allowed

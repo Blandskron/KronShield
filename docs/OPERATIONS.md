@@ -173,7 +173,19 @@ La API de permisos de evidencia admite lotes JSON de eventos minimizados. En la 
 
 El lote admite hasta 1 MiB y 2.000 eventos con UUID distintos. Los tipos admitidos son `login-success`, `login-failure`, `privilege-change` y `configuration-change`. El productor se identifica con hasta 64 caracteres en minúsculas, dígitos y guiones, empezando por una letra. El identificador es declarado por quien exporta el lote. Las fechas requieren zona horaria y cada evento debe caer desde el inicio inclusive hasta el fin exclusivo de la ventana. La ventana describe el período observado y el permiso controla cuándo puede usarse la evidencia.
 
-La carga devuelve el digest del archivo original y el de la proyección cifrada. La proyección conserva el productor, normaliza las fechas a UTC y ordena por instante y UUID. Un lote con `events: []` conserva una ventana explícita sin eventos. El triaje por reglas y el flujo Blue del planificador siguen pendientes en D04.
+La carga devuelve el digest del archivo original y el de la proyección cifrada. La proyección conserva el productor, normaliza las fechas a UTC y ordena por instante y UUID.
+
+### Ejecutar y revisar el triaje
+
+Selecciona Blue Team en el proyecto y abre un plan revisado. Desde el planificador, solicita permiso para el lote, comparte el enlace con el aprobador y carga el mismo archivo una vez aprobado. Crea el análisis, avanza **Triaje de eventos** y comparte el enlace con el aprobador para revisar y publicar la conclusión.
+
+La regla disponible es `identity-login-failure-v1`. Examina lotes del productor declarado `identity-audit` y cuenta eventos de tipo `login-failure`, deduplicados por activo y UUID. La API de creación acepta `event_rule` con ese identificador. En Blue Team, si se omite, se aplica la misma regla. El paso usa la estrategia `deterministic`.
+
+- **Observado** si al menos un evento coincide.
+- **No observado** si hay un lote del productor requerido y ningún evento coincide. Un lote explícito con `events: []` cuenta como una ventana evaluada.
+- **Sin datos de la fuente requerida** si falta un lote del productor requerido.
+
+La conclusión y el informe publicable incluyen el identificador de la regla, los lotes evaluados, el número de coincidencias y los SHA-256 de las fuentes evaluadas. El resultado se limita a las ventanas aportadas. El permiso y las fuentes deben seguir vigentes para revisar y descargar el informe.
 
 ## API de análisis offline
 

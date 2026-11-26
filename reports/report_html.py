@@ -203,14 +203,21 @@ def render_analysis_report(publication: dict) -> str:
     for item in publication["approved"]:
         evidence = "".join(f"<li><code>{escape(digest)}</code></li>" for digest in item["citations"])
         proof = item["provenance"]
+        triage = item.get("triage")
+        status = "Sin datos de la fuente requerida" if triage and item["status"] == "inconclusive" else statuses[item["status"]]
         conclusion = [
-            ("Estado", statuses[item["status"]]), ("Revisor", item["reviewer_id"]),
+            ("Estado", status), ("Revisor", item["reviewer_id"]),
             ("Motivo", item["reason"]), ("Decisión registrada", item["decided_at"]),
             ("Herramienta", proof["tool"]), ("Especialidad", proof["mode_id"]),
             ("Versión de especialidad", proof["mode_version"]),
         ]
         if item["observation"]:
             conclusion.append(("Control", item["observation"]["control"]))
+        if triage:
+            conclusion.extend((
+                ("Regla", triage["rule_id"]), ("Lotes evaluados", triage["batches_evaluated"]),
+                ("Eventos coincidentes", triage["matching_events"]),
+            ))
         if "model" in proof:
             conclusion.extend((
                 ("Política", proof["policy_version"]), ("Prompt", proof["prompt_version"]),

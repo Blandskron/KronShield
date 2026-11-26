@@ -9,10 +9,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import Connection, text
 
 from application.access import AccessError, Action, ProjectAccess
-from application.analyses import PROJECT_CONCURRENCY, AnalysisDraft, Usage, check_budget, pilot_budget
+from application.analyses import DEFAULT_EVENT_RULE, PROJECT_CONCURRENCY, AnalysisDraft, Usage, check_budget, pilot_budget
 from application.documents import DocumentCipher
 from application.scope_review import fingerprint
-from domain.team_modes import TEAM_CATALOG, TeamStep
+from domain.team_modes import TEAM_CATALOG, TeamId, TeamStep
 from infra.engagements import inventory_item, organization_stop
 from infra.evidence import admit_source, analysis_context, get_permission
 from infra.team_selections import get_selection, lock_selection
@@ -72,7 +72,7 @@ def events(connection: Connection, caller: ProjectAccess, analysis_id: UUID) -> 
 def create_draft(connection: Connection, caller: ProjectAccess, cipher: DocumentCipher,
                  request: AnalysisDraft, key: str) -> dict:
     values = {**_scope(caller), "key": idempotency_digest(key)}
-    request_digest = fingerprint({**request.model_dump(mode="json"), "sources": sorted(request.sources)})
+    request_digest = fingerprint({**request.model_dump(mode="json", exclude_none=True), "sources": sorted(request.sources)})
     _lock(connection, caller, f"create/{caller.user_id}/{values['key']}")
     previous = connection.execute(text("""
         SELECT id, request_digest FROM pentest_agent.offline_analysis
@@ -92,6 +92,8 @@ def create_draft(connection: Connection, caller: ProjectAccess, cipher: Document
     mode = TEAM_CATALOG.get(selected["mode_id"])
     if mode is None or (mode.version, mode.digest) != (selected["mode_version"], selected["mode_digest"]):
         raise AccessError(409, "analysis_manifest_changed")
+    if request.event_rule is not None and mode.id is not TeamId.BLUE:
+        raise AccessError(422, "analysis_event_rule_not_applicable")
     sources = []
     for digest in sorted(request.sources):
         context = analysis_context(connection, caller, cipher, request.permission_id, request.permission_revision, digest)
@@ -111,6 +113,8 @@ def create_draft(connection: Connection, caller: ProjectAccess, cipher: Document
                             for step in mode.workflow if isinstance(step, TeamStep)},
         "sources": sources, "budget": pilot_budget(mode),
     }
+    if mode.id is TeamId.BLUE:
+        snapshot["event_rule"] = request.event_rule or DEFAULT_EVENT_RULE
     analysis_id = uuid4()
     connection.execute(text("""
         INSERT INTO pentest_agent.offline_analysis (

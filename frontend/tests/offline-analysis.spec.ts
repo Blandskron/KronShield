@@ -10,8 +10,6 @@ const target = "44444444-4444-4444-8444-444444444444";
 const permission = "55555555-5555-4555-8555-555555555555";
 const analysis = "66666666-6666-4666-8666-666666666666";
 const reservation = "77777777-7777-4777-8777-777777777777";
-const step = "scope-record-review";
-const conclusion = step + ".observation";
 const planHash = "a".repeat(64);
 const manifestDigest = "b".repeat(64);
 const now = "2026-11-25T16:00:00Z";
@@ -30,11 +28,22 @@ function link(refs: Record<string, string>) {
   return "/#plan?" + new URLSearchParams({ org, project, ...refs });
 }
 
-function fixture() {
-  const spec = { plan_id: plan, plan_hash: planHash, mode_id: "white", mode_version: 1, mode_digest: manifestDigest,
+const blueRule = "identity-login-failure-v1";
+const eventContent = Buffer.from(JSON.stringify({
+  target_id: target, producer: "identity-audit", window_start: now, window_end: "2026-11-25T17:00:00Z", events: [],
+}));
+const eventFile = { name: "eventos.json", mimeType: "application/json", buffer: eventContent };
+
+function fixture(mode = "white") {
+  const blue = mode === "blue";
+  const step = blue ? "event-review" : "scope-record-review";
+  const conclusion = step + ".observation";
+  const payload = blue ? eventContent : content;
+  const sourceDigest = createHash("sha256").update(payload).digest("hex");
+  const spec = { plan_id: plan, plan_hash: planHash, mode_id: mode, mode_version: 1, mode_digest: manifestDigest,
     valid_from: "2025-01-01T00:00:00Z", valid_until: "2030-01-01T00:00:00Z", purpose: "offline-review",
-    allow_local_inference: true, sources: [{ target_id: target, classification: "internal",
-      capability: step, kind: "control-observations-v1", digest, size_bytes: content.length }] };
+    allow_local_inference: !blue, sources: [{ target_id: target, classification: "internal",
+      capability: step, kind: blue ? "event-batch-v1" : "control-observations-v1", digest: sourceDigest, size_bytes: payload.length }] };
   let requested = false;
   let allowed = false;
   let uploaded = false;
@@ -72,9 +81,10 @@ function fixture() {
       expect(path).toContain("/projects/" + project + "/");
       const resource = path.slice(project.length + "/projects//".length);
       if (["targets", "authorizations", "assessments"].includes(resource)) return list();
-      if (resource === "team-selection") return json({ version: 8, selection: { mode_id: "white", mode_digest: manifestDigest, mode_version: 1 } });
-      if (resource === "team-modes") return json({ items: [{ digest: manifestDigest, eligible_for_analysis: false,
-        manifest: { id: "white", version: 1, label: "White Team", inputs: ["Plan con decisión de alcance"],
+      if (resource === "team-selection") return json({ version: 8, selection: { mode_id: mode, mode_digest: manifestDigest, mode_version: 1 } });
+      if (resource === "team-modes") return json({ items: [{ digest: manifestDigest, eligible_for_analysis: true,
+        manifest: { id: mode, version: 1, label: blue ? "Blue Team" : "White Team",
+          inputs: [blue ? "Eventos minimizados" : "Plan con decisión de alcance"],
           workflow: [{ id: step, kind: "capability", tool: step }] } }] });
       if (resource === "plans/" + plan) return json({ id: plan, hash: planHash, status: "reviewed", denials: [],
         authorization: { revision: 1, valid_from: spec.valid_from, valid_until: spec.valid_until },
@@ -95,23 +105,23 @@ function fixture() {
         allowed = true;
         return json({ status: "approved" });
       }
-      if (resource === `evidence-permissions/${permission}/revisions/1/sources/${digest}`) {
+      if (resource === `evidence-permissions/${permission}/revisions/1/sources/${sourceDigest}`) {
         expect(role).toBe("operator");
         expect(allowed).toBe(true);
         expect(request.headers()["content-type"]).toBe("application/json");
-        expect(request.postDataBuffer()).toEqual(content);
+        expect(request.postDataBuffer()).toEqual(payload);
         uploaded = true;
-        return json({ source_digest: digest });
+        return json({ source_digest: sourceDigest });
       }
       if (resource === "analyses" && method === "POST") {
         expect(uploaded).toBe(true);
         expect(request.postDataJSON()).toEqual({ permission_id: permission, permission_revision: 1,
-          selection_version: 8, sources: [digest] });
+          selection_version: 8, sources: [sourceDigest], ...(blue ? { event_rule: blueRule } : {}) });
         return json({ id: analysis, snapshot_digest: planHash, created_at: now }, 201);
       }
       if (resource === "analyses/" + analysis) {
         expect(role).toBe("operator");
-        return json({ id: analysis, plan_id: plan, plan_hash: planHash, mode_id: "white", mode_version: 1,
+        return json({ id: analysis, plan_id: plan, plan_hash: planHash, mode_id: mode, mode_version: 1,
           selection_version: 8, snapshot_digest: planHash, created_at: now,
           state: isPublished && !deniedDownload ? "published" : state, cancelled_at: null,
           next_step: ["draft", "processing"].includes(state) ? step : null,
@@ -137,8 +147,9 @@ function fixture() {
         expect(role).toBe("approver");
         if (state !== "awaiting_review") return fail("analysis_review_unavailable", 409);
         return json({ analysis_id: analysis, author_id: "operator", snapshot_digest: planHash,
-          conclusions: [{ id: conclusion, status: "observed", citations: [digest], observation: null,
-            provenance: { tool: step, mode_id: "white", mode_version: 1 } }], decisions: decision ? [decision] : [],
+          conclusions: [{ id: conclusion, status: blue ? "missing" : "observed", citations: [sourceDigest], observation: null,
+            ...(blue ? { triage: { rule_id: blueRule, batches_evaluated: 1, matching_events: 0 } } : {}),
+            provenance: { tool: step, mode_id: mode, mode_version: 1 } }], decisions: decision ? [decision] : [],
           publication: isPublished ? publication : null });
       }
       if (resource === `analyses/${analysis}/review/decisions/${conclusion}`) {
@@ -272,6 +283,44 @@ test("operador, aprobador y lector completan el recorrido offline con sus permis
   } finally {
     await reviewerContext.close();
     await viewerContext.close();
+  }
+});
+
+test("Blue solicita el lote y muestra una ventana evaluada sin coincidencias", async ({ page, browser }) => {
+  test.setTimeout(90_000);
+  const scenario = fixture("blue");
+  const reviewer = await browser.newPage();
+  try {
+    await scenario.install(page, "operator");
+    await scenario.install(reviewer, "approver");
+    await page.goto(link({ id: plan }));
+    await expect(page.getByText(blueRule, { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Solicitar permiso de inferencia local")).toHaveCount(0);
+    await page.getByLabel("Activo autorizado").selectOption(target);
+    await page.getByLabel("Archivo JSON de eventos").setInputFiles(eventFile);
+    await page.getByRole("button", { name: "Solicitar permiso", exact: true }).click();
+    await expect(page.getByText("En espera de aprobación del permiso.")).toBeVisible();
+    await reviewer.goto(link({ permission }));
+    await reviewer.getByLabel("Decisión del permiso").selectOption("approve");
+    await reviewer.getByLabel("Motivo del permiso").fill("Evidencia revisada");
+    await reviewer.getByRole("button", { name: "Registrar decisión del permiso" }).click();
+    await expect(reviewer.getByText("Aprobado", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Actualizar permiso" }).click();
+    await page.getByText(/^Fuente ·/).click();
+    await page.getByLabel("Cargar archivo autorizado").setInputFiles(eventFile);
+    await page.getByRole("button", { name: "Cargar evidencia" }).click();
+    await expect(page.getByText("Evidencia cargada.")).toBeVisible();
+    await page.getByRole("button", { name: "Crear análisis offline" }).click();
+    await expect(page.getByLabel("Modo de análisis")).toHaveValue("deterministic");
+    await expect(page.getByRole("option", { name: "Inferencia local" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Avanzar siguiente paso" }).click();
+    await expect(page.getByText("En espera de revisión", { exact: true })).toBeVisible();
+    await reviewer.goto(link({ analysis }));
+    await expect(reviewer.getByRole("heading", { name: "Triaje de eventos" })).toBeVisible();
+    await expect(reviewer.getByText("No observado", { exact: true })).toBeVisible();
+    await expect(reviewer.getByText("Eventos coincidentes", { exact: true })).toBeVisible();
+  } finally {
+    await reviewer.close();
   }
 });
 

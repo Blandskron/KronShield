@@ -8,6 +8,7 @@ import { type ViewContext, write } from "./administration";
 import { Form, required } from "./forms";
 
 const MAX_BYTES = 1024 * 1024;
+const BLUE_RULE = "identity-login-failure-v1";
 type Permission = Models["PermissionDetail"];
 type Source = Models["Source"];
 
@@ -28,12 +29,14 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
   const chosen = selection.data?.selection;
   const mode = catalog.data?.items.find((entry) => entry.digest === chosen?.mode_digest &&
     entry.manifest.id === chosen.mode_id && entry.manifest.version === chosen.mode_version);
+  const blue = mode?.manifest.id === "blue";
+  const supported = blue || mode?.manifest.id === "white";
   const targets = plan.targets.filter((item) => item.attribution === "first_party" && item.reason === "allowed");
   const submit = useMutation({
     mutationFn: async () => {
       if (!file || file.size < 1 || file.size > MAX_BYTES) throw new Error("Selecciona un archivo JSON de hasta 1 MiB.");
-      if (!targets.some((item) => item.id === target) || !mode || mode.manifest.id !== "white") {
-        throw new Error("Selecciona un activo propio dentro del alcance y configura White Team.");
+      if (!targets.some((item) => item.id === target) || !mode || !supported) {
+        throw new Error("Selecciona un activo propio dentro del alcance y configura White Team o Blue Team.");
       }
       const raw = await file.arrayBuffer();
       let content;
@@ -42,15 +45,19 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
       } catch {
         throw new Error("El archivo debe contener JSON válido en UTF-8.");
       }
-      if (content?.target_id !== target || !Array.isArray(content?.observations) || !content.observations.length) {
-        throw new Error("El JSON debe incluir el UUID del activo seleccionado y sus observaciones.");
+      const validData = blue ? Array.isArray(content?.events)
+        : Array.isArray(content?.observations) && content.observations.length > 0;
+      if (content?.target_id !== target || !validData) {
+        throw new Error(blue ? "El JSON debe incluir el UUID del activo seleccionado y la lista de eventos."
+          : "El JSON debe incluir el UUID del activo seleccionado y sus observaciones.");
       }
       return createWithReceipt<Models["PermissionReceipt"]>(ctx, "evidence-permissions", {
         plan_id: plan.id, plan_hash: plan.hash, mode_id: mode.manifest.id, mode_version: mode.manifest.version,
         mode_digest: mode.digest, valid_from: plan.authorization.valid_from, valid_until: plan.authorization.valid_until,
-        purpose: "offline-review", allow_local_inference: classification === "internal" && localInference,
+        purpose: "offline-review", allow_local_inference: !blue && classification === "internal" && localInference,
         sources: [{ digest: await sha256(raw), size_bytes: file.size, target_id: target, classification,
-          capability: "scope-record-review", kind: "control-observations-v1" }],
+          capability: blue ? "event-review" : "scope-record-review",
+          kind: blue ? "event-batch-v1" : "control-observations-v1" }],
       } satisfies Models["PermissionSpec"]);
     },
   });
@@ -60,7 +67,7 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
     {catalog.isError || selection.isError ? <div className="offline-actions"><p role="alert">No se pudo cargar la especialidad.</p>
       <Button onClick={() => { void selection.refetch(); void catalog.refetch(); }}>Actualizar especialidad</Button></div>
       : catalog.isPending || selection.isPending ? <p role="status">Cargando requisitos…</p>
-      : !mode || mode.manifest.id !== "white" ? <p>El análisis del planificador admite White Team. Pide a un administrador del proyecto que configure esta especialidad.</p>
+      : !mode || !supported ? <p>Pide a un administrador del proyecto que configure White Team o Blue Team.</p>
       : !targets.length ? <p>El plan necesita un activo propio dentro del alcance.</p>
       : <form onSubmit={(event) => {
         event.preventDefault();
@@ -68,6 +75,7 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
       }}>
         <p>{mode.manifest.label} · Versión {mode.manifest.version}</p>
         <ul>{mode.manifest.inputs.map((item) => <li key={item}>{item}</li>)}</ul>
+        {blue && <p>Regla de triaje <code>{BLUE_RULE}</code> · Fallos de autenticación de <code>identity-audit</code>.</p>}
         <label className="input-field">Activo autorizado
           <select required value={target} onChange={(event) => setTarget(event.target.value)}>
             <option value="">Seleccionar</option>
@@ -75,14 +83,14 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
           </select>
         </label>
         {target && <p>UUID del activo <code>{target}</code></p>}
-        <EvidenceFile label="Archivo JSON de observaciones" onChange={setFile} />
+        <EvidenceFile label={blue ? "Archivo JSON de eventos" : "Archivo JSON de observaciones"} events={blue} onChange={setFile} />
         <label className="input-field">Clasificación
           <select value={classification} onChange={(event) =>
             setClassification(event.target.value === "restricted" ? "restricted" : "internal")}>
             <option value="internal">Interna</option><option value="restricted">Restringida</option>
           </select>
         </label>
-        {classification === "internal" && <label className="check">
+        {!blue && classification === "internal" && <label className="check">
           <input type="checkbox" checked={localInference} onChange={(event) => setLocalInference(event.target.checked)} />
           Solicitar permiso de inferencia local
         </label>}
@@ -93,12 +101,14 @@ export function RequestEvidence({ ctx, plan }: { ctx: ViewContext; plan: Models[
   </Card>;
 }
 
-function EvidenceFile({ label, onChange }: { label: string; onChange: (file?: File) => void }) {
+function EvidenceFile({ label, events, onChange }: { label: string; events: boolean; onChange: (file?: File) => void }) {
   const id = useId();
   return <div className="input-field"><label htmlFor={id}>{label}</label>
     <input id={id} type="file" accept=".json,application/json" required aria-describedby={id + "-help"}
       onChange={(event) => onChange(event.target.files?.[0])} />
-    <small className="field-help" id={id + "-help"}>JSON en UTF-8 con target_id y observations. Tamaño máximo de 1 MiB.</small>
+    <small className="field-help" id={id + "-help"}>{events
+      ? "JSON en UTF-8 con target_id, producer, window_start, window_end y events."
+      : "JSON en UTF-8 con target_id y observations."} Tamaño máximo de 1 MiB.</small>
   </div>;
 }
 
@@ -118,7 +128,8 @@ function UploadEvidence({ ctx, permission, source }: { ctx: ViewContext; permiss
     },
   });
   return <form onSubmit={(event) => { event.preventDefault(); upload.mutate(); }}>
-    <EvidenceFile label="Cargar archivo autorizado" onChange={(next) => { upload.reset(); setFile(next); }} />
+    <EvidenceFile label="Cargar archivo autorizado" events={source.kind === "event-batch-v1"}
+      onChange={(next) => { upload.reset(); setFile(next); }} />
     <Button type="submit" disabled={upload.isPending}>{upload.isPending ? "Cargando…" : "Cargar evidencia"}</Button>
     {upload.isSuccess && <p role="status">Evidencia cargada.</p>}
     {upload.error && <p role="alert">{analysisFailure(upload.error)}</p>}
@@ -148,6 +159,7 @@ export function EvidencePermission({ ctx, id, planId, frozen }: {
       return createWithReceipt<Models["AnalysisCreated"]>(ctx, "analyses", {
         permission_id: record.id, permission_revision: record.revision, selection_version: selection.data.version,
         sources: record.spec.sources.map(({ digest }) => digest).sort(),
+        ...(record.spec.mode_id === "blue" ? { event_rule: BLUE_RULE } : {}),
       } satisfies Models["AnalysisDraft"]);
     },
   });
@@ -177,12 +189,13 @@ export function EvidencePermission({ ctx, id, planId, frozen }: {
       {record.spec.sources.map((source) => <details key={source.digest}>
         <summary>Fuente · {source.digest.slice(0, 12)} · {source.classification === "internal" ? "Interna" : "Restringida"}</summary>
         <p>SHA-256 <code>{source.digest}</code></p>
-        <p>{source.kind === "legacy-reference-v1" ? "Referencia de importación" : "Archivo de observaciones JSON"}</p>
-        {owner && current && source.kind === "control-observations-v1" &&
+        <p>{source.kind === "legacy-reference-v1" ? "Referencia de importación"
+          : source.kind === "event-batch-v1" ? "Archivo de eventos JSON" : "Archivo de observaciones JSON"}</p>
+        {owner && current && source.kind !== "legacy-reference-v1" &&
           <UploadEvidence key={record.revision + source.digest} ctx={ctx} permission={record} source={source} />}
       </details>)}
       {owner && current && <div className="offline-actions">
-        {record.spec.sources.some((source) => source.kind === "control-observations-v1") &&
+        {record.spec.sources.some((source) => source.kind !== "legacy-reference-v1") &&
           <p>Carga los archivos autorizados antes de crear el análisis.</p>}
         <Button variant="primary" disabled={draft.isPending || selection.isPending} onClick={() => draft.mutate(record, {
           onSuccess: ({ id: analysis }) => { location.hash = plannerLink(ctx, { id: record.spec.plan_id, permission: id, analysis }); },

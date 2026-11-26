@@ -8,8 +8,8 @@ from uuid import UUID
 from sqlalchemy import Connection, text
 
 from application.access import AccessError, Action, ProjectAccess
-from application.analyses import Usage
-from application.analysis_dispatch import OfflineInput, StepOutput, StepWork, next_tool, validate_output
+from application.analyses import DEFAULT_EVENT_RULE, Usage
+from application.analysis_dispatch import OfflineInput, StepOutput, StepWork, event_review, next_tool, validate_output
 from application.analysis_proposals import PreparedProposal, ProposalReceipt, prepare_proposal
 from application.documents import DocumentCipher
 from application.evidence import projection_bytes
@@ -52,7 +52,7 @@ def _record(connection: Connection, values: dict, state: str, reason: str | None
                 :strategy, :proposal_error, CAST(:proposal_receipt AS jsonb))
         RETURNING {RECEIPT_FIELDS}
     """), {**values, "reservation": reservation, "state": state, "reason": reason,
-           "output": output.model_dump_json() if output is not None else None,
+           "output": output.model_dump_json(exclude_none=True) if output is not None else None,
            "proposal_error": proposal.error if proposal else None,
            "proposal_receipt": proposal.model_dump_json() if proposal else None}).mappings().one()
     return dict(row)
@@ -209,7 +209,7 @@ class PostgresDispatch:
                 inputs.append(OfflineInput(digest=source["digest"], scope=context["scope"], source=context["source"]))
         if organization_stop(connection, caller.org_id)["revision"] != snapshot["stop_revision"]:
             raise AccessError(409, "analysis_stop_changed")
-        if not inputs:
+        if not inputs and tool is not ToolId.EVENT_REVIEW:
             raise AccessError(409, "analysis_evidence_missing")
         return tuple(inputs)
 
@@ -242,6 +242,8 @@ class PostgresDispatch:
             if state not in {"draft", "ready"}:
                 raise AccessError(409, "analysis_transition_invalid")
             tool = next_tool(snapshot, completed, step_id)
+            if assisted and tool is ToolId.EVENT_REVIEW:
+                raise AccessError(422, "analysis_event_review_deterministic")
             if assisted and tool in available and not inference_available:
                 raise AccessError(503, "proposal_dependency_missing")
             try:
@@ -301,6 +303,11 @@ class PostgresDispatch:
             if output is not None:
                 try:
                     output = validate_output(output, inputs)
+                    if tool is ToolId.EVENT_REVIEW:
+                        if output != event_review(inputs, snapshot.get("event_rule", DEFAULT_EVENT_RULE)):
+                            raise ValueError("Event result does not match the frozen rule and inputs")
+                    elif output.triage is not None or output.status == "missing":
+                        raise ValueError("Event result is not applicable to this capability")
                 except ValueError:
                     failure = "analysis_output_invalid"
             measured = None

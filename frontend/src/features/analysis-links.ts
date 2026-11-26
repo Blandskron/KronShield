@@ -66,6 +66,8 @@ const explanations: Record<string, string> = {
   analysis_budget_exceeded: "El paso supera el presupuesto del análisis.",
   analysis_evidence_missing: "Falta evidencia autorizada para este paso.",
   analysis_capability_unavailable: "La capacidad offline de este paso aún no está disponible.",
+  analysis_event_review_deterministic: "El triaje de eventos solo admite el modo determinista.",
+  analysis_event_rule_not_applicable: "La regla de eventos corresponde a Blue Team.",
   analysis_selection_changed: "La selección del proyecto cambió. Actualiza el planificador antes de crear un análisis.",
   analysis_cancelled: "Este análisis está cancelado.",
   analysis_already_published: "El análisis ya está publicado.",

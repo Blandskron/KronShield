@@ -96,6 +96,16 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "triage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventTriage"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -308,6 +318,18 @@
       "AnalysisDraft": {
         "additionalProperties": false,
         "properties": {
+          "event_rule": {
+            "anyOf": [
+              {
+                "const": "identity-login-failure-v1",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Rule"
+          },
           "permission_id": {
             "format": "uuid",
             "title": "Permission Id",
@@ -1356,6 +1378,35 @@
           "created_at"
         ],
         "title": "Document",
+        "type": "object"
+      },
+      "EventTriage": {
+        "additionalProperties": false,
+        "properties": {
+          "batches_evaluated": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Batches Evaluated",
+            "type": "integer"
+          },
+          "matching_events": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Matching Events",
+            "type": "integer"
+          },
+          "rule_id": {
+            "const": "identity-login-failure-v1",
+            "title": "Rule Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule_id",
+          "batches_evaluated",
+          "matching_events"
+        ],
+        "title": "EventTriage",
         "type": "object"
       },
       "EvidenceDecisionInput": {
